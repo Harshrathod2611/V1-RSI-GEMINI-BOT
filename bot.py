@@ -1,14 +1,14 @@
 # bot.py
+import os
 import time
 import logging
 import requests
 import pyotp
 import pandas as pd
 from datetime import datetime, timedelta
-import google.generativeai as genai  # Google Gemini SDK
+from google import genai  # Updated: Clean Modern Google GenAI SDK
 
-# Import modular configuration files
-import config
+# Import modular watchlist structure
 import watchlist
 
 from SmartApi import SmartConnect
@@ -17,27 +17,52 @@ from SmartApi.smartWebSocketV2 import SmartWebSocketV2
 # Configure clean console logging formats
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
+# ==============================================================================
+# SAFE CLOUD ENVIRONMENT FALLBACK CONTROLLER
+# ==============================================================================
+try:
+    import config
+    # Local laptop execution assignments
+    API_KEY = config.API_KEY
+    CLIENT_CODE = config.CLIENT_CODE
+    PASSWORD = config.PASSWORD
+    TOTP_TOKEN = config.TOTP_TOKEN
+    TELEGRAM_BOT_TOKEN = config.TELEGRAM_BOT_TOKEN
+    TELEGRAM_CHAT_ID = config.TELEGRAM_CHAT_ID
+    GEMINI_API_KEY = config.GEMINI_API_KEY
+    logging.info("💻 Local config.py file found and mapped successfully.")
+except ModuleNotFoundError:
+    # Railway Cloud deployment environment assignments
+    API_KEY = os.environ.get("API_KEY")
+    CLIENT_CODE = os.environ.get("CLIENT_CODE")
+    PASSWORD = os.environ.get("PASSWORD")
+    TOTP_TOKEN = os.environ.get("TOTP_TOKEN")
+    TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+    TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+    logging.info("☁️ Operating inside cloud container. Vault Variables loaded cleanly.")
+
 TOKEN_TO_TICKER = {v: k for k, v in watchlist.WATCHLIST.items()}
 DATA_CACHE = {}
 
-# 🟢 STRATEGY STATE TRACKER: Remembers cycles to prevent repetitive signal spam
+# STRATEGY STATE TRACKER: Remembers cycles to prevent repetitive signal spam
 STRATEGY_STATES = {ticker: "READY" for ticker in watchlist.WATCHLIST.keys()}
 
 # User Risk Management Configurations
-CASH_CAPITAL_PER_TRADE = 7000.0   # Your personal cash allocation
-LEVERAGE_MULTIPLIER = 5.0          # Zerodha intraday MIS margin factor
-PROFIT_TARGET_PERCENT = 0.005     # 0.5% Take Profit threshold
-VOLUME_MA_PERIOD = 20              # Period used to baseline average volume
+CASH_CAPITAL_PER_TRADE = 7000.0   
+LEVERAGE_MULTIPLIER = 5.0          
+PROFIT_TARGET_PERCENT = 0.005     
+VOLUME_MA_PERIOD = 20              
 
-# Configure Gemini Client Connection
-genai.configure(api_key=config.GEMINI_API_KEY)
+# Initialize Modern Gemini Client
+ai_client = genai.Client(api_key=GEMINI_API_KEY)
 
 # ==============================================================================
-# ISOLATED AI REAL-TIME NEWS PIPELINE (GEMINI)
+# REAL-TIME NEWS PIPELINE (MODERN GEMINI API)
 # ==============================================================================
 def fetch_gemini_news_sentiment(ticker_name):
     """
-    Leverages Gemini's live data capabilities to pull global and national news
+    Leverages updated Gemini capabilities to pull global and national news
     concerning the asset at the exact millisecond of the execution alert.
     """
     try:
@@ -49,8 +74,11 @@ def fetch_gemini_news_sentiment(ticker_name):
             f"If there is no major breaking news today, simply state 'No major corporate news or global catalyst detected today. Trading purely on structural chart momentum.'"
         )
         
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        response = model.generate_content(prompt)
+        # Utilizing modern client generation call targeted at gemini-2.5-flash
+        response = ai_client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+        )
         
         if response and response.text:
             return response.text.strip()
@@ -59,17 +87,16 @@ def fetch_gemini_news_sentiment(ticker_name):
             
     except Exception as e:
         logging.error(f"❌ Gemini News Pipeline Error: {e}")
-        return "AI News Stream Temporarily Unavailable."
+        return "AI News Stream Temporarily Unavailable on Cloud Server."
 
 # ==============================================================================
 # TELEGRAM NOTIFICATION PIPELINE
 # ==============================================================================
 def send_telegram_alert(text):
-    """Pushes automated alert messages directly to your Telegram chat interface."""
     try:
-        url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {
-            "chat_id": config.TELEGRAM_CHAT_ID,
+            "chat_id": TELEGRAM_CHAT_ID,
             "text": text,
             "parse_mode": "Markdown"
         }
@@ -82,16 +109,15 @@ def send_telegram_alert(text):
         logging.error(f"❌ Failed to reach Telegram API: {e}")
 
 # ==============================================================================
-# STRATEGY ENGINE (With Memory Crossover Reset Locks)
+# STRATEGY ENGINE (With Memory Crossover Reset Locks + Cloud Time Gate)
 # ==============================================================================
 def check_for_signals(ticker):
-# 🟢 NEW: Time Gate. Only run the strategy between 9:25 AM and 1:30 PM IST
+    # 🟢 Time Gate Limit: Strategy executes alerts strictly from 9:25 AM to 1:30 PM IST
     now = datetime.now()
     if not (now.hour == 9 and now.minute >= 25) and not (10 <= now.hour < 13) and not (now.hour == 13 and now.minute <= 30):
-        return  # Silently bypass everything if it's afternoon or night
+        return
 
     df = DATA_CACHE[ticker]
-    
     if len(df) < 200:
         return
 
@@ -118,7 +144,6 @@ def check_for_signals(ticker):
     current_ema200 = latest_bar['EMA_200']
     current_rsi = latest_bar['RSI']
     
-    # 🟢 DYNAMIC RESET MECHANISM: Releases the locks if the stock returns to normal bounds
     current_state = STRATEGY_STATES[ticker]
     
     if 30 <= current_rsi <= 70:
@@ -126,10 +151,8 @@ def check_for_signals(ticker):
             STRATEGY_STATES[ticker] = "READY"
             logging.info(f"🔄 State Reset: {ticker} RSI returned to normal bounds ({round(current_rsi, 2)}). Strategy is un-locked.")
     elif current_rsi < 30 and current_state == "LOCKED_SHORT":
-        # If it was locked on an overbought short, but crashes straight down into oversold, reset it
         STRATEGY_STATES[ticker] = "READY"
     elif current_rsi > 70 and current_state == "LOCKED_BUY":
-        # If it was locked on an oversold buy, but rockets straight up into overbought, reset it
         STRATEGY_STATES[ticker] = "READY"
 
     # Volume Analysis
@@ -145,14 +168,12 @@ def check_for_signals(ticker):
     take_profit_price = round(current_close * (1.0 + PROFIT_TARGET_PERCENT), 2)
     stop_loss_estimate = round(current_close * (1.0 - PROFIT_TARGET_PERCENT), 2)
 
-    # 🟢 BUY TRIGGER (Only if state is READY and not already locked in oversold zone)
+    # BUY TRIGGER
     if current_rsi < 30:
         if STRATEGY_STATES[ticker] == "READY":
             if previous_bar['RSI'] <= previous_bar['RSI_SMA'] and latest_bar['RSI'] > latest_bar['RSI_SMA']:
                 
-                # Turn on the memory lock immediately so it can't spam while staying under 30
                 STRATEGY_STATES[ticker] = "LOCKED_BUY"
-                
                 trend_status = "🔥 *HIGH PROBABILITY (UPTREND)*" if current_close >= current_ema200 else "⚠️ *COUNTER-TREND BUY (RISKY)*"
                 ai_news_brief = fetch_gemini_news_sentiment(ticker)
 
@@ -179,14 +200,12 @@ def check_for_signals(ticker):
                 logging.info(f"🚀 BUY SIGNAL DETECTED FOR: {ticker} at ₹{current_close}. Cycle locked.")
                 send_telegram_alert(alert_msg)
 
-    # 🟢 SELL SHORT TRIGGER (Only if state is READY and not already locked in overbought zone)
+    # SELL SHORT TRIGGER
     elif current_rsi > 70:
         if STRATEGY_STATES[ticker] == "READY":
             if previous_bar['RSI'] >= previous_bar['RSI_SMA'] and latest_bar['RSI'] < latest_bar['RSI_SMA']:
                 
-                # Turn on the memory lock immediately so it can't spam while staying over 70
                 STRATEGY_STATES[ticker] = "LOCKED_SHORT"
-                
                 take_profit_short = round(current_close * (1.0 - PROFIT_TARGET_PERCENT), 2)
                 stop_loss_short = round(current_close * (1.0 + PROFIT_TARGET_PERCENT), 2)
                 
@@ -268,7 +287,7 @@ LIVE_ENGINES = {ticker: CandleAggregator(ticker) for ticker in watchlist.WATCHLI
 # SEEDER PIPELINE
 # ==============================================================================
 def bootstrap_history(smart_api_object):
-    logging.info("📥 Seeding historical baseline arrays (Drawing 30-day lookback frames via 4.5s pacing)...")
+    logging.info("📥 Seeding historical baseline arrays via 4.5s pacing...")
     
     for ticker, token in watchlist.WATCHLIST.items():
         time.sleep(4.5)  
@@ -305,12 +324,12 @@ def bootstrap_history(smart_api_object):
             DATA_CACHE[ticker] = pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
 
 def start_bot():
-    smartApi = SmartConnect(api_key=config.API_KEY)
-    generated_totp = pyotp.TOTP(config.TOTP_TOKEN).now()
-    session = smartApi.generateSession(config.CLIENT_CODE, config.PASSWORD, generated_totp)
+    smartApi = SmartConnect(api_key=API_KEY)
+    generated_totp = pyotp.TOTP(TOTP_TOKEN).now()
+    session = smartApi.generateSession(CLIENT_CODE, PASSWORD, generated_totp)
     
     if not session.get('status'):
-        logging.error("❌ Login Session Failure. Check credentials in config.py.")
+        logging.error("❌ Login Session Failure. Check variables configuration mapping.")
         return
         
     logging.info("🔐 Logged in to Angel One successfully.")
@@ -319,7 +338,7 @@ def start_bot():
     
     bootstrap_history(smartApi)
     
-    sws = SmartWebSocketV2(auth_token, config.API_KEY, config.CLIENT_CODE, feed_token)
+    sws = SmartWebSocketV2(auth_token, API_KEY, CLIENT_CODE, feed_token)
 
     def on_data(wsapp, message):
         if isinstance(message, dict) and 'token' in message:
