@@ -3,3 +3,4 @@ requests
 pyotp
 google-genai
 smartapi-python
+logzero
