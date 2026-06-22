@@ -1,5 +1,5 @@
 pandas
 requests
 pyotp
-google-generativeai
+google-genai
 smartapi-python
