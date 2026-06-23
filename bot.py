@@ -69,6 +69,17 @@ def fetch_gemini_news_sentiment(ticker_name):
     """
     try:
         logging.info(f"🤖 Querying Gemini for real-time news updates on {ticker_name}...")
+        
+        # Pull the key dynamically right at the millisecond of execution
+        current_key = os.environ.get("GEMINI_API_KEY") if os.environ.get("GEMINI_API_KEY") else GEMINI_API_KEY
+        
+        if not current_key:
+            logging.error("❌ Gemini API Key is missing from both local config and cloud environment!")
+            return "Skipping AI analysis. (API Key Configuration Error on Server)"
+            
+        # Initialize client locally within execution thread
+        local_ai_client = genai.Client(api_key=current_key)
+        
         prompt = (
             f"You are an elite financial research assistant checking real-time market data on the Indian stock market. "
             f"Provide a brief, hyper-concise summary (max 3 sentences) of the most recent, relevant breaking news, "
@@ -76,8 +87,7 @@ def fetch_gemini_news_sentiment(ticker_name):
             f"If there is no major breaking news today, simply state 'No major corporate news or global catalyst detected today. Trading purely on structural chart momentum.'"
         )
         
-        # Utilizing modern client generation call targeted at gemini-2.5-flash
-        response = ai_client.models.generate_content(
+        response = local_ai_client.models.generate_content(
             model='gemini-2.5-flash',
             contents=prompt,
         )
@@ -89,7 +99,7 @@ def fetch_gemini_news_sentiment(ticker_name):
             
     except Exception as e:
         logging.error(f"❌ Gemini News Pipeline Error: {e}")
-        return "AI News Stream Temporarily Unavailable on Cloud Server."
+        return f"AI News Stream Temporarily Unavailable on Cloud Server. (Error: {str(e)})"
 
 # ==============================================================================
 # TELEGRAM NOTIFICATION PIPELINE
