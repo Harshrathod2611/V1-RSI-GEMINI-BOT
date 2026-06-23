@@ -7,6 +7,8 @@ import pyotp
 import pandas as pd
 from datetime import datetime, timedelta
 from google import genai  # Updated: Clean Modern Google GenAI SDK
+from datetime import datetime
+import zoneinfo  # Built-in Python library for timezone management
 
 # Import modular watchlist structure
 import watchlist
@@ -112,15 +114,17 @@ def send_telegram_alert(text):
 # STRATEGY ENGINE (With Memory Crossover Reset Locks + Cloud Time Gate)
 # ==============================================================================
 def check_for_signals(ticker):
-    # 🟢 Time Gate Limit: Strategy executes alerts strictly from 9:25 AM to 1:30 PM IST
-    now = datetime.now()
-    if not (now.hour == 9 and now.minute >= 25) and not (10 <= now.hour < 13) and not (now.hour == 13 and now.minute <= 30):
-        return
+# 🟢 BULLETPROOF TIME GATE: Explicitly force Indian Standard Time (IST)
+    ist_zone = zoneinfo.ZoneInfo("Asia/Kolkata")
+    now_ist = datetime.now(ist_zone)
+    
+    # Extract the exact hour and minute in India right now
+    current_hour = now_ist.hour
+    current_minute = now_ist.minute
 
-    df = DATA_CACHE[ticker]
-    if len(df) < 200:
-        return
-
+    # Only execute strategy logic between 9:25 AM and 1:30 PM IST
+    if not (current_hour == 9 and current_minute >= 25) and not (10 <= current_hour < 13) and not (current_hour == 13 and current_minute <= 30):
+        return  # Silently drop everything if we are outside 09:25 to 13:30 IST
     # Calculate Technical Indicators
     df['EMA_200'] = df['close'].ewm(span=200, adjust=False).mean()
     df['Vol_SMA'] = df['volume'].rolling(window=VOLUME_MA_PERIOD).mean()
