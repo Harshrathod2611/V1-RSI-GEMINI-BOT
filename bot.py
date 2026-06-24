@@ -6,15 +6,19 @@ import requests
 import pyotp
 import pandas as pd
 from datetime import datetime, timedelta
-import zoneinfo  # 🟢 Fixed: Natively maps explicit Indian Standard Time
+import zoneinfo  # Explicit Indian Standard Time management
 from google import genai 
 
 import watchlist
 from SmartApi import SmartConnect
 from SmartApi.smartWebSocketV2 import SmartWebSocketV2
 
+# Configure clean logging format
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
+# ==============================================================================
+# ENVIRONMENT VARIABLE CONFIGURATION MAPPER
+# ==============================================================================
 try:
     import config
     API_KEY = config.API_KEY
@@ -24,6 +28,7 @@ try:
     TELEGRAM_BOT_TOKEN = config.TELEGRAM_BOT_TOKEN
     TELEGRAM_CHAT_ID = config.TELEGRAM_CHAT_ID
     GEMINI_API_KEY = config.GEMINI_API_KEY
+    logging.info("💻 Local config.py file loaded cleanly.")
 except ModuleNotFoundError:
     API_KEY = os.environ.get("API_KEY")
     CLIENT_CODE = os.environ.get("CLIENT_CODE")
@@ -32,66 +37,142 @@ except ModuleNotFoundError:
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
     TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
     GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+    logging.info("☁️ Operating inside cloud container. Vault Variables loaded cleanly.")
 
 TOKEN_TO_TICKER = {v: k for k, v in watchlist.WATCHLIST.items()}
 DATA_CACHE = {}
 STRATEGY_STATES = {ticker: "READY" for ticker in watchlist.WATCHLIST.keys()}
 
+# User Core Configurations
 CASH_CAPITAL_PER_TRADE = 7000.0   
 LEVERAGE_MULTIPLIER = 5.0          
 PROFIT_TARGET_PERCENT = 0.005     
 VOLUME_MA_PERIOD = 20              
 
-ai_client = genai.Client(api_key=GEMINI_API_KEY)
-
 # ==============================================================================
-# REAL-TIME NEWS PIPELINE (DYNAMIC KEY MAPPING)
+# LIVE MARKET DEPTH SNAPSHOT EXTRACTOR
 # ==============================================================================
-def fetch_gemini_news_sentiment(ticker_name):
+def fetch_market_depth_ratio(smart_api_object, exchange, token, ticker):
+    """
+    Queries Angel One API for the millisecond snap of total buy vs sell orders.
+    Returns a clean string summary of order-book pressure.
+    """
     try:
-        logging.info(f"🤖 Querying Gemini for real-time news updates on {ticker_name}...")
-        current_key = os.environ.get("GEMINI_API_KEY") if os.environ.get("GEMINI_API_KEY") else GEMINI_API_KEY
+        params = {
+            "mode": "FULL",
+            "exchangeTokens": {exchange: [str(token)]}
+        }
+        response = smart_api_object.getMarketData(params)
         
-        if not current_key:
-            return "Skipping AI analysis (Missing API Key configuration)."
-            
-        local_ai_client = genai.Client(api_key=current_key)
-        prompt = (
-            f"You are an elite financial research assistant checking real-time market data on the Indian stock market. "
-            f"Provide a brief, hyper-concise summary (max 3 sentences) of the most recent, relevant breaking news, "
-            f"corporate actions, earnings results, or global macro developments affecting {ticker_name} today. "
-            f"If there is no major breaking news today, simply state 'No major corporate news or global catalyst detected today. Trading purely on structural chart momentum.'"
-        )
-        
-        response = local_ai_client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt,
-        )
-        return response.text.strip() if response and response.text else "No news parsed."
+        if response and response.get("status") is True:
+            data_list = response.get("data", {}).get("fetched", [])
+            if data_list:
+                snap = data_list[0]
+                total_buy_qty = float(snap.get("totalBuyQuantity", 0))
+                total_sell_qty = float(snap.get("totalSellQuantity", 0))
+                
+                total_pool = total_buy_qty + total_sell_qty
+                if total_pool > 0:
+                    buy_percent = round((total_buy_qty / total_pool) * 100, 1)
+                    sell_percent = round((total_sell_qty / total_pool) * 100, 1)
+                    return f"🟢 Buyers: {buy_percent}% vs 🔴 Sellers: {sell_percent}% (Total Volume Pool: {int(total_pool)})"
+                    
+        return "Market Depth Pool Data Temporarily Unreachable from Exchange Endpoint."
     except Exception as e:
-        return f"AI News Stream Temporarily Unavailable. (Error: {str(e)})"
+        logging.error(f"❌ Error fetching market depth for {ticker}: {e}")
+        return "Market Depth Metrics Offline due to connection timeout."
 
+# ==============================================================================
+# DEEP AI ADVISOR ENGINE WITH ANTI-503 RETRY LOOP
+# ==============================================================================
+def generate_ai_advisor_analysis(ticker_name, intraday_df, depth_summary):
+    """
+    Gathers news, bundles intraday data/indicators/depth, and requests a structural
+    advisory breakdown from Gemini with a built-in backoff retry handler.
+    """
+    current_key = os.environ.get("GEMINI_API_KEY") if os.environ.get("GEMINI_API_KEY") else GEMINI_API_KEY
+    if not current_key:
+        return "⚠️ *AI ADVISOR VERDICT: REJECTED ENGINE*\n_Reason: Gemini API Key configuration missing on server._"
+
+    # Filter out only today's candles from the DataFrame to present a clean trend map
+    ist_zone = zoneinfo.ZoneInfo("Asia/Kolkata")
+    today_str = datetime.now(ist_zone).strftime("%Y-%m-%d")
+    today_candles = intraday_df[intraday_df['timestamp'].str.startswith(today_str)].tail(40)
+    
+    # Format the data cleanly into a light text table format for Gemini to interpret easily
+    candle_history_text = ""
+    for _, row in today_candles.iterrows():
+        candle_history_text += (
+            f"Time: {row['timestamp']} | O: {row['open']} | H: {row['high']} | "
+            f"L: {row['low']} | C: {row['close']} | Vol: {row['volume']} | "
+            f"RSI: {round(row.get('RSI', 0), 2)} | RSI_SMA: {round(row.get('RSI_SMA', 0), 2)} | "
+            f"EMA_200: {round(row.get('EMA_200', 0), 2)}\n"
+        )
+
+    prompt = (
+        f"You are an elite, high-conviction institutional Risk Officer and Trading Advisor for the Indian Stock Market.\n\n"
+        f"DATA PACKAGE FOR {ticker_name}:\n"
+        f"1. LIVE ORDER BOOK DEPTH PRESSURE:\n{depth_summary}\n\n"
+        f"2. INTRADAY 5-MINUTE CANDLE TREND HISTORY (WITH STRATEGY METRICS):\n{candle_history_text}\n\n"
+        f"YOUR INSTRUCTIONS:\n"
+        f"- Analyze the overall chart trend using the candle history provided (look for higher highs, distribution blocks, distance from the 200 EMA).\n"
+        f"- Factor in the Order Book Market Depth to evaluate real-time liquidity pressure.\n"
+        f"- Dynamically retrieve the latest breaking news, corporate actions, or sector trends affecting {ticker_name} today.\n"
+        f"- Provide a formal advisory verdict. You must decide whether you approve or advise against this entry based on conflicts or alignment between the indicators, volume, depth, and news.\n\n"
+        f"OUTPUT FORMAT (Strictly return exactly this template format with no extra pleasantries):\n"
+        f"🧠 *AI ADVISOR VERDICT:* [VALIDATED ENTRY] or [⚠️ ADVISE TO AVOID / LEAVE IT]\n"
+        f"────────────────────────\n"
+        f"📖 *ADVISORY ANALYSIS:* (Provide exactly 3-4 structural sentences detailing the breakdown of price action, order book layout, and today's news catalysts to back up your decision.)"
+    )
+
+    # 🔄 Anti-503 Server Congestion Retry Loop (Max 3 attempts with progressive delay)
+    retry_delay = 2.0
+    for attempt in range(3):
+        try:
+            local_ai_client = genai.Client(api_key=current_key)
+            response = local_ai_client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt,
+            )
+            if response and response.text:
+                return response.text.strip()
+            
+        except Exception as e:
+            if "503" in str(e) or "unavailable" in str(e).lower():
+                logging.warning(f"⚠️ Gemini 503 hit on attempt {attempt+1}/3. Retrying in {retry_delay}s...")
+                time.sleep(retry_delay)
+                retry_delay *= 1.5  # Increase delay progressively
+            else:
+                return f"⚠️ *AI ADVISOR VERDICT: PIPELINE FAULT*\n_Error detailing: {str(e)}_"
+                
+    return "⚠️ *AI ADVISOR VERDICT: SERVER TIMEOUT*\n_Reason: Google Free-Tier endpoints are busy. Execute manually using chart verification._"
+
+# ==============================================================================
+# TELEGRAM NOTIFICATION OUTBOUND PIPELINE
+# ==============================================================================
 def send_telegram_alert(text):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}
-        requests.post(url, json=payload, timeout=5)
+        response = requests.post(url, json=payload, timeout=5)
+        if response.status_code == 200:
+            logging.info("📨 Strategic advisory layout pushed to Telegram cleanly.")
     except Exception as e:
         logging.error(f"❌ Telegram pipeline fail: {e}")
 
 # ==============================================================================
-# STRATEGY ENGINE (TIMEZONE LOCKED)
+# STRATEGY ENGINE (STRATEGIC PROCESSING WINDOWS)
 # ==============================================================================
-def check_for_signals(ticker, is_live=False):
-    # 🟢 1. TIMEZONE LOCK: Force checking exact time in India right now
-    ist_zone = zoneinfo.ZoneInfo("Asia/Kolkata")
-    now_ist = datetime.now(ist_zone)
-    
-    # 🟢 2. SEEDER PROTECTION: Block historical loader loop from firing alert notifications
+def check_for_signals(ticker, smart_api_object=None, token=None, is_live=False):
+    # Core Protection Guard: Only analyze live candles generated from WebSocket feeds
     if not is_live:
         return
 
-    # Strict Market Session Window: 9:25 AM to 1:30 PM IST
+    # 🟢 1. TIMEZONE CONTROL: Hard-locked to Indian Standard Time (IST)
+    ist_zone = zoneinfo.ZoneInfo("Asia/Kolkata")
+    now_ist = datetime.now(ist_zone)
+    
+    # Session Window Filter: 09:25 AM to 01:30 PM IST
     if not (now_ist.hour == 9 and now_ist.minute >= 25) and not (10 <= now_ist.hour < 13) and not (now_ist.hour == 13 and now_ist.minute <= 30):
         return
 
@@ -99,7 +180,7 @@ def check_for_signals(ticker, is_live=False):
     if len(df) < 200:
         return
 
-    # Math processing functions completely untouched
+    # 🟢 2. MATHEMATICAL INDICATOR STRUCTURING (100% Unchanged Strategy)
     df['EMA_200'] = df['close'].ewm(span=200, adjust=False).mean()
     df['Vol_SMA'] = df['volume'].rolling(window=VOLUME_MA_PERIOD).mean()
 
@@ -124,6 +205,7 @@ def check_for_signals(ticker, is_live=False):
     
     current_state = STRATEGY_STATES[ticker]
     
+    # State reset checks to unlock loops cleanly
     if 30 <= current_rsi <= 70:
         if current_state != "READY":
             STRATEGY_STATES[ticker] = "READY"
@@ -132,23 +214,28 @@ def check_for_signals(ticker, is_live=False):
     elif current_rsi > 70 and current_state == "LOCKED_BUY":
         STRATEGY_STATES[ticker] = "READY"
 
+    # Volume parameters
     current_volume = latest_bar['volume']
     avg_volume = latest_bar['Vol_SMA'] if latest_bar['Vol_SMA'] > 0 else 1
     volume_ratio = round(current_volume / avg_volume, 2)
-    volume_status = f"🔥 *SMART MONEY SPIKE ({volume_ratio}x)*" if volume_ratio >= 2.0 else f"📋 Standard Market Activity ({volume_ratio}x)"
+    volume_status = f"🔥 *SMART MONEY SPIKE ({volume_ratio}x)*" if volume_ratio >= 2.0 else f"📋 Standard Volume Activity ({volume_ratio}x)"
 
+    # Trade calculation formulas
     purchasing_power = CASH_CAPITAL_PER_TRADE * LEVERAGE_MULTIPLIER
     trade_quantity = int(purchasing_power // current_close)
     
     take_profit_price = round(current_close * (1.0 + PROFIT_TARGET_PERCENT), 2)
     stop_loss_estimate = round(current_close * (1.0 - PROFIT_TARGET_PERCENT), 2)
 
-    # BUY TRIGGER
+    # 🟢 BUY ENTRY TRIGGER (Strategy math completely identical)
     if current_rsi < 30 and current_state == "READY":
         if previous_bar['RSI'] <= previous_bar['RSI_SMA'] and latest_bar['RSI'] > latest_bar['RSI_SMA']:
             STRATEGY_STATES[ticker] = "LOCKED_BUY"
             trend_status = "🔥 *HIGH PROBABILITY (UPTREND)*" if current_close >= current_ema200 else "⚠️ *COUNTER-TREND BUY (RISKY)*"
-            ai_news_brief = fetch_gemini_news_sentiment(ticker)
+            
+            # Fetch market depth and trigger Gemini review
+            depth_data = fetch_market_depth_ratio(smart_api_object, "NSE", token, ticker)
+            ai_advisor_block = generate_ai_advisor_analysis(ticker, df, depth_data)
 
             alert_msg = (
                 f"📊 *STRATEGY SIGNAL DETECTED*\n"
@@ -164,21 +251,24 @@ def check_for_signals(ticker, is_live=False):
                 f"• *Take Profit Target (0.5%):* ₹{take_profit_price}\n"
                 f"• *Risk Stop Guide (0.5%):* ₹{stop_loss_estimate}\n"
                 f"────────────────────────\n"
-                f"🤖 *GEMINI REAL-TIME NEWS INTELLIGENCE:*\n"
-                f"_{ai_news_brief}_\n"
+                f"{ai_advisor_block}\n"
                 f"────────────────────────\n"
-                f"🕒 *Candle Stamp:* {latest_bar['timestamp']}"
+                f"🕒 *Candle Stamp:* {latest_bar['timestamp']} IST"
             )
             send_telegram_alert(alert_msg)
 
-    # SELL SHORT TRIGGER
+    # 🟢 SELL SHORT ENTRY TRIGGER (Strategy math completely identical)
     elif current_rsi > 70 and current_state == "READY":
         if previous_bar['RSI'] >= previous_bar['RSI_SMA'] and latest_bar['RSI'] < latest_bar['RSI_SMA']:
             STRATEGY_STATES[ticker] = "LOCKED_SHORT"
+            
             take_profit_short = round(current_close * (1.0 - PROFIT_TARGET_PERCENT), 2)
             stop_loss_short = round(current_close * (1.0 + PROFIT_TARGET_PERCENT), 2)
             trend_status = "🔥 *HIGH PROBABILITY SHORT (DOWNTREND)*" if current_close <= current_ema200 else "⚠️ *COUNTER-TREND SHORT (RISKY)*"
-            ai_news_brief = fetch_gemini_news_sentiment(ticker)
+            
+            # Fetch market depth and trigger Gemini review
+            depth_data = fetch_market_depth_ratio(smart_api_object, "NSE", token, ticker)
+            ai_advisor_block = generate_ai_advisor_analysis(ticker, df, depth_data)
 
             alert_msg = (
                 f"📊 *STRATEGY SIGNAL DETECTED*\n"
@@ -194,19 +284,20 @@ def check_for_signals(ticker, is_live=False):
                 f"• *Take Profit Target (0.5%):* ₹{take_profit_short}\n"
                 f"• *Risk Stop Guide (0.5%):* ₹{stop_loss_short}\n"
                 f"────────────────────────\n"
-                f"🤖 *GEMINI REAL-TIME NEWS INTELLIGENCE:*\n"
-                f"_{ai_news_brief}_\n"
+                f"{ai_advisor_block}\n"
                 f"────────────────────────\n"
-                f"🕒 *Candle Stamp:* {latest_bar['timestamp']}"
+                f"🕒 *Candle Stamp:* {latest_bar['timestamp']} IST"
             )
             send_telegram_alert(alert_msg)
 
 # ==============================================================================
-# LIVE DATA AGGREGATOR (IST CLOCK SYNCHRONIZED)
+# LIVE DATA AGGREGATOR (IST COORDINATED CLOCK)
 # ==============================================================================
 class CandleAggregator:
-    def __init__(self, ticker):
+    def __init__(self, ticker, smart_api_object, token):
         self.ticker = ticker
+        self.smart_api = smart_api_object
+        self.token = token
         self.current_candle_time = None
         self.open = None
         self.high = None
@@ -215,7 +306,6 @@ class CandleAggregator:
         self.volume = 0
 
     def handle_tick(self, price, last_trade_qty=0):
-        # 🟢 3. LIVE STREAM CLOCK FIX: Explicitly match India Time for incoming packets
         ist_zone = zoneinfo.ZoneInfo("Asia/Kolkata")
         now_ist = datetime.now(ist_zone)
         
@@ -248,11 +338,12 @@ class CandleAggregator:
         }])
         
         DATA_CACHE[self.ticker] = pd.concat([DATA_CACHE[self.ticker], new_row]).drop_duplicates(subset=['timestamp']).tail(300)
-        # Pass is_live=True so the bot knows this candle came directly from the active market
-        check_for_signals(self.ticker, is_live=True)
+        # Forward inputs dynamically down to strategy core execution channel
+        check_for_signals(self.ticker, smart_api_object=self.smart_api, token=self.token, is_live=True)
 
-LIVE_ENGINES = {ticker: CandleAggregator(ticker) for ticker in watchlist.WATCHLIST.keys()}
-
+# ==============================================================================
+# ENGINE STARTUP INITIALIZATIONS
+# ==============================================================================
 def bootstrap_history(smart_api_object):
     logging.info("📥 Seeding historical baseline arrays via 4.5s pacing...")
     ist_zone = zoneinfo.ZoneInfo("Asia/Kolkata")
@@ -275,7 +366,6 @@ def bootstrap_history(smart_api_object):
                 if response and response.get("status") is True:
                     df = pd.DataFrame(response["data"], columns=["timestamp", "open", "high", "low", "close", "volume"])
                     DATA_CACHE[ticker] = df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
-                    # Pass is_live=False so historical loading won't issue notifications
                     check_for_signals(ticker, is_live=False)
                     break
                 elif response and "access rate" in response.get("message", "").lower():
@@ -294,12 +384,17 @@ def start_bot():
     session = smartApi.generateSession(CLIENT_CODE, PASSWORD, generated_totp)
     
     if not session.get('status'):
+        logging.error("❌ Session authentication fault. Terminating launch sequence.")
         return
         
     auth_token = session['data']['jwtToken']
     feed_token = smartApi.getfeedToken()
     
     bootstrap_history(smartApi)
+    
+    # Map out operational engines with direct references to API handlers
+    global LIVE_ENGINES
+    LIVE_ENGINES = {ticker: CandleAggregator(ticker, smartApi, token) for ticker, token in watchlist.WATCHLIST.items()}
     
     sws = SmartWebSocketV2(auth_token, API_KEY, CLIENT_CODE, feed_token)
 
@@ -318,6 +413,7 @@ def start_bot():
         tokens_to_subscribe = list(watchlist.WATCHLIST.values())
         token_list = [{"exchangeType": 1, "tokens": tokens_to_subscribe}]
         sws.subscribe("fit_bot_stream", 1, token_list)
+        logging.info("📡 WebSocket stream fully linked and processing live ticks.")
 
     sws.on_open = on_open
     sws.on_data = on_data
