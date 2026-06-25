@@ -390,7 +390,7 @@ def bootstrap_history(smart_api_object):
             DATA_CACHE[ticker] = pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
 
 def start_bot():
-    smartApi = SmartConnect(api_key=API_KEY)
+    smartApi = SmartConnect(api_key=API_KEY, timeout=15)
     generated_totp = pyotp.TOTP(TOTP_TOKEN).now()
     session = smartApi.generateSession(CLIENT_CODE, PASSWORD, generated_totp)
     
