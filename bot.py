@@ -52,31 +52,56 @@ VOLUME_MA_PERIOD = 20
 # ==============================================================================
 # LIVE MARKET DEPTH SNAPSHOT EXTRACTOR
 # ==============================================================================
+# ==============================================================================
+# LIVE MARKET DEPTH SNAPSHOT EXTRACTOR (HARDENED UPGRADE)
+# ==============================================================================
 def fetch_market_depth_ratio(smart_api_object, exchange, token, ticker):
-    try:
-        params = {
-            "mode": "FULL",
-            "exchangeTokens": {exchange: [str(token)]}
+    """
+    Fetches the instantaneous market depth bid-ask pool distribution.
+    Includes an automatic retry mechanism to insulate against temporary network drops.
+    """
+    # Enforce strict string sanitization for token inputs
+    clean_token = str(token).strip()
+    clean_exchange = str(exchange).strip().upper() # Ensure it's explicitly 'NSE'
+    
+    params = {
+        "mode": "FULL",
+        "exchangeTokens": {
+            clean_exchange: [clean_token]
         }
-        response = smart_api_object.getMarketData(params)
-        
-        if response and response.get("status") is True:
-            data_list = response.get("data", {}).get("fetched", [])
-            if data_list:
-                snap = data_list[0]
-                total_buy_qty = float(snap.get("totalBuyQuantity", 0))
-                total_sell_qty = float(snap.get("totalSellQuantity", 0))
+    }
+    
+    # 3-pass loop to guard against temporary gateway timeouts
+    for attempt in range(3):
+        try:
+            response = smart_api_object.getMarketData(params.get("mode"), params.get("exchangeTokens"))
+            
+            if response and response.get("status") is True:
+                data_dict = response.get("data", {})
+                fetched_list = data_dict.get("fetched", [])
                 
-                total_pool = total_buy_qty + total_sell_qty
-                if total_pool > 0:
-                    buy_percent = round((total_buy_qty / total_pool) * 100, 1)
-                    sell_percent = round((total_sell_qty / total_pool) * 100, 1)
-                    return f"🟢 Buyers: {buy_percent}% vs 🔴 Sellers: {sell_percent}% (Total Volume Pool: {int(total_pool)})"
+                if fetched_list:
+                    snap = fetched_list[0]
+                    total_buy_qty = float(snap.get("totalBuyQuantity", 0))
+                    total_sell_qty = float(snap.get("totalSellQuantity", 0))
                     
-        return "Market Depth Pool Data Temporarily Unreachable from Exchange Endpoint."
-    except Exception as e:
-        logging.error(f"❌ Error fetching market depth for {ticker}: {e}")
-        return "Market Depth Metrics Offline due to connection timeout."
+                    total_pool = total_buy_qty + total_sell_qty
+                    if total_pool > 0:
+                        buy_percent = round((total_buy_qty / total_pool) * 100, 1)
+                        sell_percent = round((total_sell_qty / total_pool) * 100, 1)
+                        logging.info(f"✅ Market Depth captured cleanly for {ticker} on attempt {attempt+1}")
+                        return f"🟢 Buyers: {buy_percent}% vs 🔴 Sellers: {sell_percent}% (Total Volume Pool: {int(total_pool)})"
+            
+            # If the server returned an error format, back off slightly before retrying
+            time.sleep(0.5)
+            
+        except Exception as e:
+            logging.warning(f"⚠️ Market depth fetch try {attempt+1}/3 failed for {ticker}: {e}")
+            time.sleep(0.5)
+            
+    # Final fallback if all attempts are exhausted
+    logging.error(f"❌ Market Depth completely unreachable for {ticker} after 3 attempts.")
+    return "Market Depth Pool Data Temporarily Unreachable from Exchange Endpoint."
 
 # ==============================================================================
 # DEEP AI ADVISOR ENGINE WITH ANTI-503 RETRY LOOP
