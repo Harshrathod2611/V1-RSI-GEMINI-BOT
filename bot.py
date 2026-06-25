@@ -53,10 +53,6 @@ VOLUME_MA_PERIOD = 20
 # LIVE MARKET DEPTH SNAPSHOT EXTRACTOR
 # ==============================================================================
 def fetch_market_depth_ratio(smart_api_object, exchange, token, ticker):
-    """
-    Queries Angel One API for the millisecond snap of total buy vs sell orders.
-    Returns a clean string summary of order-book pressure.
-    """
     try:
         params = {
             "mode": "FULL",
@@ -86,20 +82,14 @@ def fetch_market_depth_ratio(smart_api_object, exchange, token, ticker):
 # DEEP AI ADVISOR ENGINE WITH ANTI-503 RETRY LOOP
 # ==============================================================================
 def generate_ai_advisor_analysis(ticker_name, intraday_df, depth_summary):
-    """
-    Gathers news, bundles intraday data/indicators/depth, and requests a structural
-    advisory breakdown from Gemini with a built-in backoff retry handler.
-    """
     current_key = os.environ.get("GEMINI_API_KEY") if os.environ.get("GEMINI_API_KEY") else GEMINI_API_KEY
     if not current_key:
         return "⚠️ *AI ADVISOR VERDICT: REJECTED ENGINE*\n_Reason: Gemini API Key configuration missing on server._"
 
-    # Filter out only today's candles from the DataFrame to present a clean trend map
     ist_zone = zoneinfo.ZoneInfo("Asia/Kolkata")
     today_str = datetime.now(ist_zone).strftime("%Y-%m-%d")
     today_candles = intraday_df[intraday_df['timestamp'].str.startswith(today_str)].tail(40)
     
-    # Format the data cleanly into a light text table format for Gemini to interpret easily
     candle_history_text = ""
     for _, row in today_candles.iterrows():
         candle_history_text += (
@@ -125,7 +115,6 @@ def generate_ai_advisor_analysis(ticker_name, intraday_df, depth_summary):
         f"📖 *ADVISORY ANALYSIS:* (Provide exactly 3-4 structural sentences detailing the breakdown of price action, order book layout, and today's news catalysts to back up your decision.)"
     )
 
-    # 🔄 Anti-503 Server Congestion Retry Loop (Max 3 attempts with progressive delay)
     retry_delay = 2.0
     for attempt in range(3):
         try:
@@ -141,7 +130,7 @@ def generate_ai_advisor_analysis(ticker_name, intraday_df, depth_summary):
             if "503" in str(e) or "unavailable" in str(e).lower():
                 logging.warning(f"⚠️ Gemini 503 hit on attempt {attempt+1}/3. Retrying in {retry_delay}s...")
                 time.sleep(retry_delay)
-                retry_delay *= 1.5  # Increase delay progressively
+                retry_delay *= 1.5
             else:
                 return f"⚠️ *AI ADVISOR VERDICT: PIPELINE FAULT*\n_Error detailing: {str(e)}_"
                 
@@ -155,32 +144,26 @@ def send_telegram_alert(text):
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}
         response = requests.post(url, json=payload, timeout=5)
-        if response.status_code == 200:
-            logging.info("📨 Strategic advisory layout pushed to Telegram cleanly.")
     except Exception as e:
         logging.error(f"❌ Telegram pipeline fail: {e}")
 
 # ==============================================================================
-# STRATEGY ENGINE (STRATEGIC PROCESSING WINDOWS)
+# STRATEGY ENGINE
 # ==============================================================================
 def check_for_signals(ticker, smart_api_object=None, token=None, is_live=False):
-    # Core Protection Guard: Only analyze live candles generated from WebSocket feeds
     if not is_live:
         return
 
-    # 🟢 1. TIMEZONE CONTROL: Hard-locked to Indian Standard Time (IST)
     ist_zone = zoneinfo.ZoneInfo("Asia/Kolkata")
     now_ist = datetime.now(ist_zone)
     
-    # Session Window Filter: 09:25 AM to 01:30 PM IST
     if not (now_ist.hour == 9 and now_ist.minute >= 25) and not (10 <= now_ist.hour < 13) and not (now_ist.hour == 13 and now_ist.minute <= 30):
         return
 
-    df = DATA_CACHE[ticker]
-    if len(df) < 200:
+    df = DATA_CACHE.get(ticker)
+    if df is None or len(df) < 200:
         return
 
-    # 🟢 2. MATHEMATICAL INDICATOR STRUCTURING (100% Unchanged Strategy)
     df['EMA_200'] = df['close'].ewm(span=200, adjust=False).mean()
     df['Vol_SMA'] = df['volume'].rolling(window=VOLUME_MA_PERIOD).mean()
 
@@ -203,9 +186,8 @@ def check_for_signals(ticker, smart_api_object=None, token=None, is_live=False):
     current_ema200 = latest_bar['EMA_200']
     current_rsi = latest_bar['RSI']
     
-    current_state = STRATEGY_STATES[ticker]
+    current_state = STRATEGY_STATES.get(ticker, "READY")
     
-    # State reset checks to unlock loops cleanly
     if 30 <= current_rsi <= 70:
         if current_state != "READY":
             STRATEGY_STATES[ticker] = "READY"
@@ -214,26 +196,22 @@ def check_for_signals(ticker, smart_api_object=None, token=None, is_live=False):
     elif current_rsi > 70 and current_state == "LOCKED_BUY":
         STRATEGY_STATES[ticker] = "READY"
 
-    # Volume parameters
     current_volume = latest_bar['volume']
     avg_volume = latest_bar['Vol_SMA'] if latest_bar['Vol_SMA'] > 0 else 1
     volume_ratio = round(current_volume / avg_volume, 2)
     volume_status = f"🔥 *SMART MONEY SPIKE ({volume_ratio}x)*" if volume_ratio >= 2.0 else f"📋 Standard Volume Activity ({volume_ratio}x)"
 
-    # Trade calculation formulas
     purchasing_power = CASH_CAPITAL_PER_TRADE * LEVERAGE_MULTIPLIER
     trade_quantity = int(purchasing_power // current_close)
     
     take_profit_price = round(current_close * (1.0 + PROFIT_TARGET_PERCENT), 2)
     stop_loss_estimate = round(current_close * (1.0 - PROFIT_TARGET_PERCENT), 2)
 
-    # 🟢 BUY ENTRY TRIGGER (Strategy math completely identical)
     if current_rsi < 30 and current_state == "READY":
         if previous_bar['RSI'] <= previous_bar['RSI_SMA'] and latest_bar['RSI'] > latest_bar['RSI_SMA']:
             STRATEGY_STATES[ticker] = "LOCKED_BUY"
             trend_status = "🔥 *HIGH PROBABILITY (UPTREND)*" if current_close >= current_ema200 else "⚠️ *COUNTER-TREND BUY (RISKY)*"
             
-            # Fetch market depth and trigger Gemini review
             depth_data = fetch_market_depth_ratio(smart_api_object, "NSE", token, ticker)
             ai_advisor_block = generate_ai_advisor_analysis(ticker, df, depth_data)
 
@@ -257,7 +235,6 @@ def check_for_signals(ticker, smart_api_object=None, token=None, is_live=False):
             )
             send_telegram_alert(alert_msg)
 
-    # 🟢 SELL SHORT ENTRY TRIGGER (Strategy math completely identical)
     elif current_rsi > 70 and current_state == "READY":
         if previous_bar['RSI'] >= previous_bar['RSI_SMA'] and latest_bar['RSI'] < latest_bar['RSI_SMA']:
             STRATEGY_STATES[ticker] = "LOCKED_SHORT"
@@ -266,7 +243,6 @@ def check_for_signals(ticker, smart_api_object=None, token=None, is_live=False):
             stop_loss_short = round(current_close * (1.0 + PROFIT_TARGET_PERCENT), 2)
             trend_status = "🔥 *HIGH PROBABILITY SHORT (DOWNTREND)*" if current_close <= current_ema200 else "⚠️ *COUNTER-TREND SHORT (RISKY)*"
             
-            # Fetch market depth and trigger Gemini review
             depth_data = fetch_market_depth_ratio(smart_api_object, "NSE", token, ticker)
             ai_advisor_block = generate_ai_advisor_analysis(ticker, df, depth_data)
 
@@ -291,7 +267,7 @@ def check_for_signals(ticker, smart_api_object=None, token=None, is_live=False):
             send_telegram_alert(alert_msg)
 
 # ==============================================================================
-# LIVE DATA AGGREGATOR (IST COORDINATED CLOCK)
+# LIVE DATA AGGREGATOR
 # ==============================================================================
 class CandleAggregator:
     def __init__(self, ticker, smart_api_object, token):
@@ -306,6 +282,10 @@ class CandleAggregator:
         self.volume = 0
 
     def handle_tick(self, price, last_trade_qty=0):
+        # Double check cache initialization to completely prevent KeyError events
+        if self.ticker not in DATA_CACHE or DATA_CACHE[self.ticker] is None:
+            DATA_CACHE[self.ticker] = pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
+
         ist_zone = zoneinfo.ZoneInfo("Asia/Kolkata")
         now_ist = datetime.now(ist_zone)
         
@@ -338,7 +318,6 @@ class CandleAggregator:
         }])
         
         DATA_CACHE[self.ticker] = pd.concat([DATA_CACHE[self.ticker], new_row]).drop_duplicates(subset=['timestamp']).tail(300)
-        # Forward inputs dynamically down to strategy core execution channel
         check_for_signals(self.ticker, smart_api_object=self.smart_api, token=self.token, is_live=True)
 
 # ==============================================================================
@@ -352,6 +331,7 @@ def bootstrap_history(smart_api_object):
     for ticker, token in watchlist.WATCHLIST.items():
         time.sleep(4.5)  
         retry_attempts = 3
+        success = False
         while retry_attempts > 0:
             try:
                 params = {
@@ -367,16 +347,22 @@ def bootstrap_history(smart_api_object):
                     df = pd.DataFrame(response["data"], columns=["timestamp", "open", "high", "low", "close", "volume"])
                     DATA_CACHE[ticker] = df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
                     check_for_signals(ticker, is_live=False)
+                    success = True
                     break
                 elif response and "access rate" in response.get("message", "").lower():
                     time.sleep(12)
                     retry_attempts -= 1
                 else:
-                    DATA_CACHE[ticker] = pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
                     break
             except Exception as e:
                 time.sleep(5)
                 retry_attempts -= 1
+        
+        # 🟢 CRITICAL GUARD: If historical call fails completely or hits a rate-limit, 
+        # initialize an empty DataFrame structural fallback so it NEVER throws a KeyError later.
+        if not success:
+            logging.warning(f"⚠️ Seeder rate-limited or failed for {ticker}. Initializing clean cache fallback.")
+            DATA_CACHE[ticker] = pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
 
 def start_bot():
     smartApi = SmartConnect(api_key=API_KEY)
@@ -392,7 +378,6 @@ def start_bot():
     
     bootstrap_history(smartApi)
     
-    # Map out operational engines with direct references to API handlers
     global LIVE_ENGINES
     LIVE_ENGINES = {ticker: CandleAggregator(ticker, smartApi, token) for ticker, token in watchlist.WATCHLIST.items()}
     
@@ -403,9 +388,8 @@ def start_bot():
             token = message.get('token')
             ticker = TOKEN_TO_TICKER.get(token)
             if ticker:
-                # 🟢 Defensive Guard Rail: Skip untracked tokens to prevent crash
+                # 🟢 Hardened Protection: Ensure ticker is registered in engines
                 if ticker not in LIVE_ENGINES:
-                    logging.warning(f"⚠️ Received live tick for {ticker}, but it's missing from LIVE_ENGINES initialization. Skipping.")
                     return
                 
                 raw_price = message.get('last_traded_price', 0)
@@ -420,10 +404,9 @@ def start_bot():
         sws.subscribe("fit_bot_stream", 1, token_list)
         logging.info("📡 WebSocket stream fully linked and processing live ticks.")
 
-    # Link callbacks smoothly to the streaming app class
     sws.on_open = on_open
     sws.on_data = on_data
     sws.connect()
-    
+
 if __name__ == "__main__":
     start_bot()
