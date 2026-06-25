@@ -398,14 +398,14 @@ def start_bot():
     
     sws = SmartWebSocketV2(auth_token, API_KEY, CLIENT_CODE, feed_token)
 
-def on_data(wsapp, message):
+    def on_data(wsapp, message):
         if isinstance(message, dict) and 'token' in message:
             token = message.get('token')
             ticker = TOKEN_TO_TICKER.get(token)
             if ticker:
-                # 🟢 DEFENSIVE GUARD: Make sure the ticker actually exists in your live processing engines
+                # 🟢 Defensive Guard Rail: Skip untracked tokens to prevent crash
                 if ticker not in LIVE_ENGINES:
-                    logging.warning(f"⚠️ Received live tick for {ticker}, but it's missing from LIVE_ENGINES initialization. Skipping to prevent crash.")
+                    logging.warning(f"⚠️ Received live tick for {ticker}, but it's missing from LIVE_ENGINES initialization. Skipping.")
                     return
                 
                 raw_price = message.get('last_traded_price', 0)
@@ -420,9 +420,10 @@ def on_data(wsapp, message):
         sws.subscribe("fit_bot_stream", 1, token_list)
         logging.info("📡 WebSocket stream fully linked and processing live ticks.")
 
+    # Link callbacks smoothly to the streaming app class
     sws.on_open = on_open
     sws.on_data = on_data
     sws.connect()
-
+    
 if __name__ == "__main__":
     start_bot()
