@@ -398,11 +398,16 @@ def start_bot():
     
     sws = SmartWebSocketV2(auth_token, API_KEY, CLIENT_CODE, feed_token)
 
-    def on_data(wsapp, message):
+def on_data(wsapp, message):
         if isinstance(message, dict) and 'token' in message:
             token = message.get('token')
             ticker = TOKEN_TO_TICKER.get(token)
             if ticker:
+                # 🟢 DEFENSIVE GUARD: Make sure the ticker actually exists in your live processing engines
+                if ticker not in LIVE_ENGINES:
+                    logging.warning(f"⚠️ Received live tick for {ticker}, but it's missing from LIVE_ENGINES initialization. Skipping to prevent crash.")
+                    return
+                
                 raw_price = message.get('last_traded_price', 0)
                 last_qty = message.get('last_traded_quantity', 0)
                 live_price = raw_price / 100.0 if raw_price > 0 else 0
