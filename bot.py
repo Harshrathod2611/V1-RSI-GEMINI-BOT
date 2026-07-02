@@ -86,11 +86,12 @@ def create_live_signal_chart(ticker, trade_type, full_df):
         entry_row = day_df.iloc[signal_loc]
         marker_color = '#2ecc71' if trade_type == "BUY" else '#e74c3c'
         ax1.scatter(signal_loc, entry_row['close'], color=marker_color, s=150, zorder=5, marker='^' if trade_type == "BUY" else 'v')
-        ax1.annotate(f"  {trade_type} Signal Trigger\n  ₹{entry_row['close']}", (signal_loc, entry_row['close']), 
+        ax1.annotate(f"  {trade_type} Signal Trigger\n  INR {entry_row['close']}", (signal_loc, entry_row['close']), 
                      color='white', weight='bold', fontsize=8, bbox=dict(facecolor=marker_color, alpha=0.8, boxstyle='round,pad=0.3'))
 
-        ax1.set_title(f"📊 {ticker} - 5M LIVE SIGNAL ANALYSIS SNAPSHOT", color='white', fontsize=12, weight='bold', loc='left')
-        ax1.set_ylabel("Stock Price (₹)", color='#b2b5be')
+        # 🟢 FIXED: Emojis removed from chart text attributes to prevent server font-missing warnings
+        ax1.set_title(f"{ticker} - 5M LIVE SIGNAL ANALYSIS SNAPSHOT", color='white', fontsize=12, weight='bold', loc='left')
+        ax1.set_ylabel("Stock Price (INR)", color='#b2b5be')
         ax1.grid(True, color='#2a2e39', linestyle=':', alpha=0.6)
         ax1.set_facecolor('#131722')
 
@@ -127,6 +128,9 @@ def create_live_signal_chart(ticker, trade_type, full_df):
         plt.tight_layout()
         plt.savefig(file_path, facecolor=fig.get_facecolor(), edgecolor='none', dpi=120)
         plt.close(fig)
+        
+        # 🟢 FIXED: Tiny delay to allow the server operating system to finish writing and release the file handle
+        time.sleep(0.5)
         return file_path
     except Exception as e:
         logging.error(f"❌ Headless chart compilation crashed: {str(e)}")
@@ -204,10 +208,12 @@ def send_telegram_multimedia_alert(text, image_path=None):
             with open(image_path, 'rb') as photo_file:
                 payload = {"chat_id": TELEGRAM_CHAT_ID, "caption": text, "parse_mode": "Markdown"}
                 files = {"photo": photo_file}
-                response = requests.post(url, data=payload, files=files, timeout=10)
+                response = requests.post(url, data=payload, files=files, timeout=15)
             if response.status_code == 200:
                 logging.info("📸 Visual alert packet successfully dispatched to Telegram channels.")
                 return
+            else:
+                logging.error(f"⚠️ Telegram API rejected sendPhoto request: Status {response.status_code}, Body: {response.text}")
         
         # Fallback to standard text channel execution if the chart asset generation fails
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
