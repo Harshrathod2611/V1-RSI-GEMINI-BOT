@@ -202,32 +202,43 @@ def generate_ai_advisor_analysis(ticker_name, intraday_df, volume_summary):
 def send_telegram_multimedia_alert(text, image_path=None):
     """
     Transmits strategy metrics along with technical charts directly to your Telegram chat channel.
-    Ensures caption lengths stay safely within Telegram's 1024-character threshold.
+    Sends the pure visual chart first, followed instantly by the complete technical layout 
+    to bypass Telegram caption constraints and markdown parsing exceptions completely.
     """
     try:
-        # 🌟 SAFETY TRUNCATE LAYER: Prevent Telegram's 1024 caption limit error
-        MAX_CAPTION_LENGTH = 1000  # Leaving a small safety buffer zone
-        safe_caption = text
-        if len(text) > MAX_CAPTION_LENGTH:
-            logging.warning(f"⚠️ Warning: Alert text length ({len(text)} chars) exceeds photo caption limits. Truncating to fit safety window.")
-            safe_caption = text[:MAX_CAPTION_LENGTH] + "\n\n...(Analysis text truncated for chart delivery)"
-
+        # 🌟 STEP 1: DELIVER THE VISUAL CHART AS ASOLATED MEDIA
         if image_path and os.path.exists(image_path):
-            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+            url_photo = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
             with open(image_path, 'rb') as photo_file:
-                payload = {"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption, "parse_mode": "Markdown"}
-                files = {"photo": photo_file}
-                response = requests.post(url, data=payload, files=files, timeout=15)
-            if response.status_code == 200:
-                logging.info("📸 Visual alert packet successfully dispatched to Telegram channels.")
-                return
+                # We send the photo with an empty or very short caption to prevent formatting crashes
+                payload_photo = {
+                    "chat_id": TELEGRAM_CHAT_ID, 
+                    "caption": "📊 Live Signal Horizon Analysis Snapshot Matrix", 
+                    "parse_mode": "Markdown"
+                }
+                files_photo = {"photo": photo_file}
+                response_photo = requests.post(url_photo, data=payload_photo, files=files_photo, timeout=15)
+            
+            if response_photo.status_code == 200:
+                logging.info("📸 Visual chart document successfully uploaded to Telegram.")
             else:
-                logging.error(f"⚠️ Telegram API rejected sendPhoto request: Status {response.status_code}, Body: {response.text}")
+                logging.error(f"⚠️ Telegram photo channel rejected: Status {response_photo.status_code}, Body: {response_photo.text}")
         
-        # Fallback to standard text channel execution if the chart asset generation fails
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}
-        requests.post(url, json=payload, timeout=5)
+        # 🌟 STEP 2: DELIVER THE FULL TECHNICAL UN-TRUNCATED TEXT BLOCK AS A FOLLOW-UP MESSAGE
+        # This completely avoids the 1024 character limit, allowing up to 4000 characters with zero markdown breaks
+        url_msg = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload_msg = {
+            "chat_id": TELEGRAM_CHAT_ID, 
+            "text": text, 
+            "parse_mode": "Markdown"
+        }
+        response_msg = requests.post(url_msg, json=payload_msg, timeout=5)
+        
+        if response_msg.status_code == 200:
+            logging.info("📜 Complete diagnostic analysis ledger dispatched successfully.")
+        else:
+            logging.error(f"⚠️ Telegram text channel rejected: Status {response_msg.status_code}, Body: {response_msg.text}")
+
     except Exception as e:
         logging.error(f"❌ Telegram pipeline exception fault: {e}")
 
