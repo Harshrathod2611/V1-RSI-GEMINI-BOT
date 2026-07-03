@@ -159,20 +159,23 @@ def generate_ai_advisor_analysis(ticker_name, intraday_df, volume_summary):
             f"RSI: {round(row.get('RSI', 0), 2)} | RSI_SMA: {round(row.get('RSI_SMA', 0), 2)}\n"
         )
 
-    prompt = (
+prompt = (
         f"You are an elite, high-conviction institutional Risk Officer and Trading Advisor for the Indian Stock Market.\n\n"
         f"DATA PACKAGE FOR {ticker_name}:\n"
         f"1. LIVE TRANSACTION VOLUME DISTRIBUTION METRICS:\n{volume_summary}\n\n"
         f"2. INTRADAY 5-MINUTE CANDLE TREND HISTORY:\n{candle_history_text}\n\n"
         f"YOUR INSTRUCTIONS:\n"
-        f"- Analyze the overall chart trend using the candle history provided (look for breakdown blocks, structural support zones, or RSI exhaustion levels).\n"
-        f"- Factor in the transactional volume status to confirm institutional buy/sell pressure.\n"
-        f"- Dynamically retrieve the latest breaking news, corporate actions, or sector trends affecting {ticker_name} today.\n"
-        f"- Provide a formal advisory verdict. You must decide whether you approve or advise against this entry based on conflicts or alignment between price action, volume spikes, and news.\n\n"
-        f"OUTPUT FORMAT (Strictly return exactly this template format with no extra pleasantries):\n"
-        f"🧠 *AI ADVISOR VERDICT:* [VALIDATED ENTRY] or [⚠️ ADVISE TO AVOID / LEAVE IT]\n"
+        f"- Analyze the current chart setup concisely.\n"
+        f"- Keep your analysis short, high-density, and limited to 3-4 bullet points maximum.\n"
+        f"- Cover Trend/Structure, Volume Validation, and Momentum. Be brutally direct.\n"
+        f"- Provide a formal advisory verdict: [VALIDATED ENTRY] or [⚠️ ADVISE TO AVOID].\n\n"
+        f"OUTPUT FORMAT (Strictly return exactly this template format with NO introductory text or pleasantries):\n"
+        f"🧠 *AI ADVISOR VERDICT:* [VERDICT HERE]\n"
         f"────────────────────────\n"
-        f"📖 *ADVISORY ANALYSIS:* (Provide exactly 3-4 structural sentences detailing the breakdown of price action, volume confirmations, and today's news catalysts to back up your decision.)"
+        f"📖 *ADVISORY ANALYSIS:*\n"
+        f"• *Trend Context:* (1 short sentence mapping price direction/levels)\n"
+        f"• *Volume Metrics:* (1 short sentence validating institutional pressure)\n"
+        f"• *Momentum Level:* (1 short sentence detailing RSI conditions)"
     )
 
     retry_delay = 2.0
@@ -201,12 +204,20 @@ def generate_ai_advisor_analysis(ticker_name, intraday_df, volume_summary):
 def send_telegram_multimedia_alert(text, image_path=None):
     """
     Transmits strategy metrics along with technical charts directly to your Telegram chat channel.
+    Ensures caption lengths stay safely within Telegram's 1024-character threshold.
     """
     try:
+        # 🌟 SAFETY TRUNCATE LAYER: Prevent Telegram's 1024 caption limit error
+        MAX_CAPTION_LENGTH = 1000  # Leaving a small safety buffer zone
+        safe_caption = text
+        if len(text) > MAX_CAPTION_LENGTH:
+            logging.warning(f"⚠️ Warning: Alert text length ({len(text)} chars) exceeds photo caption limits. Truncating to fit safety window.")
+            safe_caption = text[:MAX_CAPTION_LENGTH] + "\n\n...(Analysis text truncated for chart delivery)"
+
         if image_path and os.path.exists(image_path):
             url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
             with open(image_path, 'rb') as photo_file:
-                payload = {"chat_id": TELEGRAM_CHAT_ID, "caption": text, "parse_mode": "Markdown"}
+                payload = {"chat_id": TELEGRAM_CHAT_ID, "caption": safe_caption, "parse_mode": "Markdown"}
                 files = {"photo": photo_file}
                 response = requests.post(url, data=payload, files=files, timeout=15)
             if response.status_code == 200:
