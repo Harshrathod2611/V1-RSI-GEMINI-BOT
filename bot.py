@@ -55,20 +55,24 @@ VOLUME_MA_PERIOD = 20
 # ==============================================================================
 # HEADLESS LIVE CHART GENERATOR
 # ==============================================================================
+# ==============================================================================
+# HEADLESS LIVE CHART GENERATOR (78-CANDLE HORIZON WITH DAY DIVIDER)
+# ==============================================================================
 def create_live_signal_chart(ticker, trade_type, full_df):
     """
     Generates a professional 2-panel chart showing exactly 78 candles 
     of activity up to the current live candle trigger point.
+    Injects a vertical divider line on session crossover points and fixes x-axis timestamps.
     """
     try:
         os.makedirs("charts", exist_ok=True)
         
-        # 🌟 FIXED: Always extract exactly the last 78 candles leading up to the trigger 
+        # Always extract exactly the last 78 candles leading up to the trigger 
         # to ensure a consistent, beautiful widescreen historical trend context.
         if len(full_df) >= 78:
             day_df = full_df.tail(78).copy().reset_index(drop=True)
         else:
-            day_df = full_df.copy().reset_index(drop=True) # Fallback if history array is somehow shorter
+            day_df = full_df.copy().reset_index(drop=True) # Fallback if history array is shorter
 
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), sharex=True, 
                                        gridspec_kw={'height_ratios': [2.5, 1]})
@@ -108,16 +112,34 @@ def create_live_signal_chart(ticker, trade_type, full_df):
         ax2.set_facecolor('#131722')
         ax2.legend(loc='lower left', facecolor='#1c2030', edgecolor='none', labelcolor='white', fontsize=8)
 
-        # X-Axis Time Cleanups (Dynamic calculation based on 78 items)
-        x_ticks = range(0, len(day_df), max(1, len(day_df)//8))
+        # DETECT NEW DAY ENTRY POINT AND INJECT A VERTICAL DASHED DIVIDER LINE
+        last_date_seen = None
+        for idx, row in day_df.iterrows():
+            current_ts = str(row['timestamp'])
+            current_date = current_ts.split(' ')[0] if ' ' in current_ts else current_ts
+            if last_date_seen and current_date != last_date_seen:
+                # Add vertical divider lines across both the price track and indicator axis panels
+                ax1.axvline(x=idx, color='#ffeb3b', linestyle='--', alpha=0.7, linewidth=1.5)
+                ax2.axvline(x=idx, color='#ffeb3b', linestyle='--', alpha=0.7, linewidth=1.5)
+                ax1.annotate("NEW DAY START", xy=(idx, ax1.get_ylim()[1]), color='#ffeb3b', 
+                             fontsize=7, weight='bold', alpha=0.8, ha='center', va='bottom')
+            last_date_seen = current_date
+
+        # REPAIR TIME AND DATE X-AXIS ROTATED TICK LABELS
+        x_ticks = range(0, len(day_df), max(1, len(day_df)//6))
         ax2.set_xticks(x_ticks)
         
         formatted_labels = []
         for t in x_ticks:
-            ts_str = str(day_df.iloc[t]['timestamp'])
-            time_part = ts_str.split(' ')[1] if ' ' in ts_str else ts_str
-            formatted_labels.append(time_part[:5])
-        ax2.set_xticklabels(formatted_labels, color='#b2b5be', rotation=0)
+            ts_str = str(day_df.iloc[t]['timestamp'])  # Layout format: "2026-07-03 09:25"
+            if ' ' in ts_str:
+                date_part, time_part = ts_str.split(' ')
+                short_date = date_part[5:]  # Extract MM-DD format cleanly
+                formatted_labels.append(f"{short_date}\n{time_part[:5]}")
+            else:
+                formatted_labels.append(ts_str)
+                
+        ax2.set_xticklabels(formatted_labels, color='#b2b5be', rotation=0, fontsize=8)
 
         fig.patch.set_facecolor('#1c2030')
         ax1.tick_params(colors='#b2b5be', labelsize=9)
