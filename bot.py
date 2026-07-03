@@ -57,20 +57,20 @@ VOLUME_MA_PERIOD = 20
 # ==============================================================================
 def create_live_signal_chart(ticker, trade_type, full_df):
     """
-    Generates a professional 2-panel chart showing the full day's activity
-    up to the current live candle trigger point.
+    Generates a professional 2-panel chart showing exactly 78 candles 
+    of activity up to the current live candle trigger point.
     """
     try:
         os.makedirs("charts", exist_ok=True)
-        ist_zone = zoneinfo.ZoneInfo("Asia/Kolkata")
-        trade_day = datetime.now(ist_zone).strftime("%Y-%m-%d")
         
-        # Filter dataframe for the current active trading day
-        day_df = full_df[full_df['timestamp'].str.startswith(trade_day)].copy().reset_index()
-        if day_df.empty or len(day_df) < 2:
-            day_df = full_df.tail(40).copy().reset_index() # Fallback mechanism if grid is empty
+        # 🌟 FIXED: Always extract exactly the last 78 candles leading up to the trigger 
+        # to ensure a consistent, beautiful widescreen historical trend context.
+        if len(full_df) >= 78:
+            day_df = full_df.tail(78).copy().reset_index(drop=True)
+        else:
+            day_df = full_df.copy().reset_index(drop=True) # Fallback if history array is somehow shorter
 
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 7), sharex=True, 
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), sharex=True, 
                                        gridspec_kw={'height_ratios': [2.5, 1]})
         
         # PANEL 1: CANDLESTICKS ONLY
@@ -81,7 +81,7 @@ def create_live_signal_chart(ticker, trade_type, full_df):
             try: body_line.set_capstyle('round')
             except AttributeError: pass
 
-        # Annotate Entry Signal Row Location
+        # Annotate Entry Signal Row Location (The very last candle in our 78-candle window)
         signal_loc = len(day_df) - 1
         entry_row = day_df.iloc[signal_loc]
         marker_color = '#2ecc71' if trade_type == "BUY" else '#e74c3c'
@@ -89,8 +89,7 @@ def create_live_signal_chart(ticker, trade_type, full_df):
         ax1.annotate(f"  {trade_type} Signal Trigger\n  INR {entry_row['close']}", (signal_loc, entry_row['close']), 
                      color='white', weight='bold', fontsize=8, bbox=dict(facecolor=marker_color, alpha=0.8, boxstyle='round,pad=0.3'))
 
-        # 🟢 FIXED: Emojis removed from chart text attributes to prevent server font-missing warnings
-        ax1.set_title(f"{ticker} - 5M LIVE SIGNAL ANALYSIS SNAPSHOT", color='white', fontsize=12, weight='bold', loc='left')
+        ax1.set_title(f"{ticker} - 5M LIVE SIGNAL ANALYSIS SNAPSHOT (78-CANDLE HORIZON)", color='white', fontsize=12, weight='bold', loc='left')
         ax1.set_ylabel("Stock Price (INR)", color='#b2b5be')
         ax1.grid(True, color='#2a2e39', linestyle=':', alpha=0.6)
         ax1.set_facecolor('#131722')
@@ -109,8 +108,8 @@ def create_live_signal_chart(ticker, trade_type, full_df):
         ax2.set_facecolor('#131722')
         ax2.legend(loc='lower left', facecolor='#1c2030', edgecolor='none', labelcolor='white', fontsize=8)
 
-        # X-Axis Time Cleanups
-        x_ticks = range(0, len(day_df), max(1, len(day_df)//6))
+        # X-Axis Time Cleanups (Dynamic calculation based on 78 items)
+        x_ticks = range(0, len(day_df), max(1, len(day_df)//8))
         ax2.set_xticks(x_ticks)
         
         formatted_labels = []
@@ -129,7 +128,6 @@ def create_live_signal_chart(ticker, trade_type, full_df):
         plt.savefig(file_path, facecolor=fig.get_facecolor(), edgecolor='none', dpi=120)
         plt.close(fig)
         
-        # 🟢 FIXED: Tiny delay to allow the server operating system to finish writing and release the file handle
         time.sleep(0.5)
         return file_path
     except Exception as e:
