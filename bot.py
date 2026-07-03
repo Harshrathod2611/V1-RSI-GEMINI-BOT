@@ -176,7 +176,7 @@ prompt = (
         f"• *Trend Context:* (1 short sentence mapping price direction/levels)\n"
         f"• *Volume Metrics:* (1 short sentence validating institutional pressure)\n"
         f"• *Momentum Level:* (1 short sentence detailing RSI conditions)"
-    )
+    );
 
     retry_delay = 2.0
     for attempt in range(3):
