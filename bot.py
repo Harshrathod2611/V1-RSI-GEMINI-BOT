@@ -159,7 +159,7 @@ def generate_ai_advisor_analysis(ticker_name, intraday_df, volume_summary):
             f"RSI: {round(row.get('RSI', 0), 2)} | RSI_SMA: {round(row.get('RSI_SMA', 0), 2)}\n"
         )
 
-prompt = (
+    prompt = (
         f"You are an elite, high-conviction institutional Risk Officer and Trading Advisor for the Indian Stock Market.\n\n"
         f"DATA PACKAGE FOR {ticker_name}:\n"
         f"1. LIVE TRANSACTION VOLUME DISTRIBUTION METRICS:\n{volume_summary}\n\n"
@@ -176,7 +176,7 @@ prompt = (
         f"• *Trend Context:* (1 short sentence mapping price direction/levels)\n"
         f"• *Volume Metrics:* (1 short sentence validating institutional pressure)\n"
         f"• *Momentum Level:* (1 short sentence detailing RSI conditions)"
-    );
+    )
 
     retry_delay = 2.0
     for attempt in range(3):
