@@ -269,12 +269,13 @@ def start_flattrade_system():
     
     # 3. Construct raw JSON payload parameters
     # Note: Send your raw PASSWORD string; the server parses it directly via Version 2
+# 3. Construct raw JSON payload parameters
     payload = {
         "apkversion": "1.0.0",
         "uid": CLIENT_CODE,
         "pwd": PASSWORD,             
         "twoFA": raw_totp,
-        "vc": "FTB2C",               # Default retail vendor code for Flattrade
+        "vc": "FTB2C",               
         "appkey": hashed_api_secret,
         "imei": "00-00-00-00-00-00",
         "source": "API"
@@ -282,16 +283,19 @@ def start_flattrade_system():
     
     url = "https://piconnect.flattrade.in/PiConnectAPI/QuickAuth"
     
-    # 4. 🌟 STRUCTURE AS AN APPLICATION FORM DATA PARAMETER MAP
-    # This wraps the stringified payload inside a proper 'jData' form field
-    form_data = {
-        "jData": json.dumps(payload)
+    # 🌟 MANUALLY STRINGIFY THE OUTSIDE STRUCTURE TO PREVENT ESCAPE CORRUPTION
+    # This maps the text structure exactly as Flattrade's background string parser demands
+    raw_payload_string = f"jData={json.dumps(payload)}"
+    
+    # Force the headers to application/x-www-form-urlencoded explicitly
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded"
     }
     
     try:
-        logging.info("📡 Firing corrected form-encoded data signature bypass request...")
-        # Use data= instead of json= to enforce application/x-www-form-urlencoded
-        response = requests.post(url, data=form_data, timeout=10)
+        logging.info("📡 Firing raw string-encoded data signature bypass request...")
+        # Pass the raw payload string via data= with explicit headers
+        response = requests.post(url, data=raw_payload_string, headers=headers, timeout=10)
         
         logging.info(f"💾 Raw Server HTTP Status Code: {response.status_code}")
         logging.info(f"📡 Raw Server Text Feedback: {response.text}")
@@ -299,16 +303,6 @@ def start_flattrade_system():
         login_response = response.json()
     except Exception as err:
         logging.error(f"❌ Network channel connection failure: {str(err)}")
-        return
-
-    if login_response and login_response.get('stat') == 'Ok':
-        logging.info("🚀 FLATTRADE DIRECT AUTHENTICATION SUCCESSFUL.")
-        api = FlattradeBotEngine()
-        # Initialize the state using the returned user token
-        api.set_session(userid=CLIENT_CODE, token=login_response.get('susertoken'), user_data=login_response)
-    else:
-        error_msg = login_response.get('emsg') if isinstance(login_response, dict) else "Malformed payload data."
-        logging.error(f"❌ Flattrade gateway authentication rejected. Server feedback: {error_msg}")
         return
 
     # Seed baseline historical data sets 
