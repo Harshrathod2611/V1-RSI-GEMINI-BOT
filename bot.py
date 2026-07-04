@@ -259,27 +259,31 @@ class CandleAggregator:
 # ==============================================================================
 def get_flattrade_token_via_code(request_code):
     """Exchanges the manual request_code for a permanent session token."""
-    # 🌟 CLEAN UP INPUT: Automatically strips hidden whitespaces or newline jumps
+    # 1. Clean up inputs to remove invisible trailing carriage returns or spaces
     clean_code = request_code.strip()
-    
-    # Clean up the secret key from your environment as well just in case
     clean_secret = API_SECRET.strip() if API_SECRET else ""
+    clean_api_key = API_KEY.strip() if API_KEY else ""
     
-    # Compute signature with explicit API Secret and stripped code
-    raw_signature_block = f"{API_KEY}{clean_code}{clean_secret}"
+    # 2. Generate the official SHA-256 validation block
+    # Structure: SHA256( API_KEY + REQUEST_CODE + API_SECRET )
+    raw_signature_block = f"{clean_api_key}{clean_code}{clean_secret}"
     hashed_api_secret = hashlib.sha256(raw_signature_block.encode('utf-8')).hexdigest()
     
     token_url = "https://authapi.flattrade.in/trade/apitoken"
+    
+    # 3. Formulate the official parameter layout map
     payload = {
-        "api_key": API_KEY,
+        "api_key": clean_api_key,
         "request_code": clean_code,
-        "api_secret": hashed_api_secret
+        "api_secret": hashed_api_secret  # This fields holds the computed hex digest
     }
     
     try:
-        logging.info("📡 Exchanging temporary Telegram request_code for session token...")
+        logging.info(f"📡 Sending handshake to Flattrade using API Key: {clean_api_key[:4]}... and Code: {clean_code[:4]}...")
         response = requests.post(token_url, json=payload, timeout=10)
-        return response.json()
+        response_data = response.json()
+        logging.info(f"💾 Raw Gatekeeper Response: {response_data}")
+        return response_data
     except Exception as err:
         logging.error(f"❌ Handshake processing failed: {str(err)}")
         return None
