@@ -263,20 +263,19 @@ def start_flattrade_system():
     raw_totp = pyotp.TOTP(TOTP_TOKEN).now()
     logging.info(f"🔑 Generating system authorization handshake for client: {CLIENT_CODE}")
     
-    # 2. Compute explicit SHA-256 Hashing required by Flattrade for password and secret matrix
-    hashed_password = hashlib.sha256(PASSWORD.encode('utf-8')).hexdigest()
-    raw_secret_combo = f"{API_KEY}{CLIENT_CODE}"
-    hashed_api_secret = hashlib.sha256(raw_secret_combo.encode('utf-8')).hexdigest()
-    
-    # 3. Fire structural authorization sequence to API routers
-    login_response = api.login(
-        userid=CLIENT_CODE, 
-        password=hashed_password, 
-        twoFA=raw_totp, 
-        vendor_code='', 
-        api_secret=hashed_api_secret, 
-        imei='DESKTOP_ENV'
-    )
+    # 2. 🌟 SEND METRICS IN RAW SPELLING (The library handles hashing internally)
+    try:
+        login_response = api.login(
+            userid=CLIENT_CODE, 
+            password=PASSWORD,          # Send raw string, library will hash this automatically!
+            twoFA=raw_totp, 
+            vendor_code='', 
+            api_secret=API_KEY,         # Send raw API key string!
+            imei='DESKTOP_ENV'
+        )
+    except Exception as network_error:
+        logging.error(f"❌ Structural crash inside NorenApi library handshakes: {str(network_error)}")
+        return
     
     # Debug raw response tracking map
     logging.info(f"📡 Debug raw gateway footprint payload: {login_response}")
@@ -284,10 +283,11 @@ def start_flattrade_system():
     if login_response and login_response.get('stat') == 'Ok':
         logging.info("🚀 FLATTRADE ROUTER SYSTEM ONLINE. LIVE STREAM ENGAGED.")
     else:
-        error_msg = login_response.get('emsg') if login_response else "Empty network handshake signature returned."
+        error_msg = login_response.get('emsg') if isinstance(login_response, dict) else "Empty network handshake signature returned (None)."
         logging.error(f"❌ Flattrade gateway authentication rejected. Server feedback: {error_msg}")
         return
 
+    # Seed baseline historical data sets 
     for ticker in watchlist.WATCHLIST.keys():
         DATA_CACHE[ticker] = pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
         logging.info(f"📈 Seeding real-time metric arrays for tracking asset vector: {ticker}")
