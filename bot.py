@@ -298,13 +298,11 @@ def get_flattrade_token_via_code(request_code):
 def start_flattrade_system():
     api = FlattradeBotEngine()
     
-    # 1. Dispatch secure clickable interactive prompt straight to your mobile device
-    auth_url = f"https://auth.flattrade.in/?app_key={API_KEY}"
+    # Send a prompt directly to your phone explaining both methods
     init_message = (
-        "🔐 *FLATTRADE AUTHENTICATION REQUIRED*\n\n"
-        "1. Click the link below to verify identity:\n"
-        f"[Click Here to Securely Login]({auth_url})\n\n"
-        "2. Copy the token code parameter from your address bar and reply to this message directly."
+        "⚙️ *FLATTRADE DUAL-MODE CONTAINER STREAM*\n\n"
+        "If your Railway IP matches your Flattrade console, log in via your browser and paste your short `request_code` below.\n\n"
+        "💡 *IP BLOCKED WORKAROUND:* If your server IP is blocked, open your local terminal, generate a valid session token (`susertoken`), and reply directly to this message with your active session token string!"
     )
     
     try:
@@ -314,17 +312,15 @@ def start_flattrade_system():
             "text": init_message,
             "parse_mode": "Markdown"
         })
-        logging.info("📨 Dispatched interactive login interface configuration link to Telegram.")
     except Exception as telegram_err:
-        logging.error(f"❌ Failed to dispatch bootstrap alert link: {str(telegram_err)}")
+        logging.error(f"❌ Telegram alert link error: {str(telegram_err)}")
 
-    logging.info("⏳ Container engine idling. Monitoring background matrix for Telegram text payload...")
+    logging.info("⏳ Container engine online. Waiting for Telegram text payload...")
     
     offset = None
     session_token = None
-    login_response = None
+    login_response = {}
     
-    # 2. Dynamic event loop checking Telegram for your reply string
     while not session_token:
         try:
             updates_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
@@ -340,32 +336,40 @@ def start_flattrade_system():
                     message = update.get("message", {})
                     text_body = message.get("text", "").strip()
                     
-                    if str(message.get("chat", {}).get("id")) == str(TELEGRAM_CHAT_ID) and len(text_body) > 10:
-                        logging.info("📨 Intercepted request_code input from Telegram stream.")
+                    if str(message.get("chat", {}).get("id")) == str(TELEGRAM_CHAT_ID) and len(text_body) > 5:
                         
-                        # Process token verification using your copied code string
-                        login_response = get_flattrade_token_via_code(text_body)
-                        if login_response and login_response.get('stat') == 'Ok':
-                            session_token = login_response.get('susertoken')
+                        # PATH 1: If you texted a raw session token directly, instantly bypass the auth server handshake
+                        if len(text_body) > 40: 
+                            logging.info("🌟 Manual session token override captured. Bypassing gateway handshake...")
+                            session_token = text_body
+                            login_response = {"stat": "Ok", "susertoken": session_token}
                             break
+                        
+                        # PATH 2: Standard authentication flow
                         else:
-                            emsg = login_response.get('emsg', 'Invalid API Signature combo') if login_response else "Server timed out."
-                            requests.post(telegram_url, json={
-                                "chat_id": TELEGRAM_CHAT_ID,
-                                "text": f"❌ Token rejected by Flattrade: {emsg}. Check your API_SECRET variable."
-                            })
+                            logging.info("📨 Single-use request_code captured. Processing hash blocks...")
+                            login_response = get_flattrade_token_via_code(text_body)
+                            if login_response and login_response.get('stat') == 'Ok':
+                                session_token = login_response.get('susertoken')
+                                break
+                            else:
+                                emsg = login_response.get('emsg', 'IP Verification Mismatch') if login_response else "Gateway timeout."
+                                requests.post(telegram_url, json={
+                                    "chat_id": TELEGRAM_CHAT_ID,
+                                    "text": f"❌ Gateway Rejected: {emsg}.\n\n💡 If this is an IP restriction issue, text your local session token directly to bypass."
+                                })
         except Exception as poll_err:
-            logging.error(f"⚠️ Error polling Telegram updates: {str(poll_err)}")
+            logging.error(f"⚠️ Telegram background update poll error: {str(poll_err)}")
             
         time.sleep(2)
 
-    logging.info("🚀 FLATTRADE VERSION 2 SECURE AUTHENTICATION SUCCESSFUL via Telegram routing.")
+    # 🚀 LAUNCH THE WEB-SOCKET Matrix
+    logging.info("🚀 SESSION SECURED. Running live strategy matrices.")
     api.set_session(userid=CLIENT_CODE, token=session_token, user_data=login_response)
-
+    
     # Seed baseline historical data sets 
     for ticker in watchlist.WATCHLIST.keys():
         DATA_CACHE[ticker] = pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
-        logging.info(f"📈 Seeding real-time metric arrays for tracking asset vector: {ticker}")
 
     global LIVE_ENGINES
     LIVE_ENGINES = {ticker: CandleAggregator(ticker) for ticker in watchlist.WATCHLIST.keys()}
@@ -377,10 +381,8 @@ def start_flattrade_system():
             if ticker and ticker in LIVE_ENGINES:
                 price = float(msg.get('lp', 0))
                 volume_delta = int(msg.get('v', 0))
-                bid_depth = float(msg.get('tbq', 160000))
-                ask_depth = float(msg.get('tsq', 130000))
                 if price > 0:
-                    LIVE_ENGINES[ticker].handle_tick(price, volume_delta, bid_depth, ask_depth)
+                    LIVE_ENGINES[ticker].handle_tick(price, volume_delta)
 
     def open_callback():
         for ticker, token in watchlist.WATCHLIST.items():
@@ -388,7 +390,6 @@ def start_flattrade_system():
         logging.info("📡 Live WebSocket matrix pipeline successfully established.")
 
     api.start_websocket(subscribe_callback=event_handler_feed, socket_open_callback=open_callback)
-    
     while True:
         time.sleep(1)
         
