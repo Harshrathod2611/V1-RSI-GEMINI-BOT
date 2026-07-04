@@ -257,33 +257,39 @@ class CandleAggregator:
 # ENGINE MAIN EXECUTIVE FRAMEWORK
 # ==============================================================================
 def start_flattrade_system():
+def start_flattrade_system():
     api = FlattradeBotEngine()
     
-    # 1. Compute dynamic TOTP token validation metrics
-    raw_totp = pyotp.TOTP(TOTP_TOKEN).now()
+    # 1. Generate the dynamic 2FA TOTP token text string
+    totp_generator = pyotp.TOTP(TOTP_TOKEN)
+    raw_totp = str(totp_generator.now())  
     logging.info(f"🔑 Generating system authorization handshake for client: {CLIENT_CODE}")
     
-    # 2. 🌟 SEND METRICS IN RAW SPELLING (The library handles hashing internally)
+    # 2. Compute the exact mandatory SHA-256 string signature Flattrade requires
+    raw_secret_combo = f"{API_KEY}{CLIENT_CODE}"
+    hashed_api_secret = hashlib.sha256(raw_secret_combo.encode('utf-8')).hexdigest()
+    
     try:
+        # 3. 🌟 CORRECTED ROUTE SPECIFICATION PAYLOAD
         login_response = api.login(
             userid=CLIENT_CODE, 
-            password=PASSWORD,          # Send raw string, library will hash this automatically!
+            password=PASSWORD,          # Sent raw (handled by library internally)
             twoFA=raw_totp, 
             vendor_code='', 
-            api_secret=API_KEY,         # Send raw API key string!
-            imei='DESKTOP_ENV'
+            api_secret=hashed_api_secret, 
+            imei='00-00-00-00-00-00'     # ⚡ Changed to a standard MAC address structure to prevent parser crash
         )
-    except Exception as network_error:
-        logging.error(f"❌ Structural crash inside NorenApi library handshakes: {str(network_error)}")
+    except Exception as internal_err:
+        logging.error(f"❌ Critical error executing NorenApi framework handshake: {str(internal_err)}")
         return
-    
-    # Debug raw response tracking map
+        
+    # Print the raw dictionary payload returned from the server
     logging.info(f"📡 Debug raw gateway footprint payload: {login_response}")
     
     if login_response and login_response.get('stat') == 'Ok':
         logging.info("🚀 FLATTRADE ROUTER SYSTEM ONLINE. LIVE STREAM ENGAGED.")
     else:
-        error_msg = login_response.get('emsg') if isinstance(login_response, dict) else "Empty network handshake signature returned (None)."
+        error_msg = login_response.get('emsg') if isinstance(login_response, dict) else "Empty payload response (None)"
         logging.error(f"❌ Flattrade gateway authentication rejected. Server feedback: {error_msg}")
         return
 
