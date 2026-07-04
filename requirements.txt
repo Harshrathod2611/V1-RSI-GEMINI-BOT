@@ -2,7 +2,7 @@ pandas
 requests
 pyotp
 google-genai
-smartapi-python
+NorenRestApiPy
 logzero
 websocket-client
 matplotlib
