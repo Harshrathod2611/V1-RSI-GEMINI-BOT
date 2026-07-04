@@ -257,40 +257,50 @@ class CandleAggregator:
 # ENGINE MAIN EXECUTIVE FRAMEWORK
 # ==============================================================================
 def start_flattrade_system():
-    api = FlattradeBotEngine()
-    
-    # 1. Generate the dynamic 2FA TOTP token text string
+    # 1. Generate dynamic 2FA TOTP token text string
     totp_generator = pyotp.TOTP(TOTP_TOKEN)
     raw_totp = str(totp_generator.now())  
-    logging.info(f"🔑 Generating system authorization handshake for client: {CLIENT_CODE}")
+    logging.info(f"🔑 Generating real-time direct handshake for client: {CLIENT_CODE}")
     
-    # 2. Compute the exact mandatory SHA-256 string signature Flattrade requires
+    # 2. Compute the exact SHA-256 signatures required by Flattrade
+    hashed_password = hashlib.sha256(PASSWORD.encode('utf-8')).hexdigest()
     raw_secret_combo = f"{API_KEY}{CLIENT_CODE}"
     hashed_api_secret = hashlib.sha256(raw_secret_combo.encode('utf-8')).hexdigest()
     
-    try:
-        # 3. 🌟 CORRECTED ROUTE SPECIFICATION PAYLOAD
-        login_response = api.login(
-            userid=CLIENT_CODE, 
-            password=PASSWORD,          # Sent raw (handled by library internally)
-            twoFA=raw_totp, 
-            vendor_code='', 
-            api_secret=hashed_api_secret, 
-            imei='00-00-00-00-00-00'     # ⚡ Changed to a standard MAC address structure to prevent parser crash
-        )
-        logging.info(f"DEBUG - Client Length: {len(CLIENT_CODE)} | Password Length: {len(PASSWORD)}")
-        logging.info(f"DEBUG - API Key Length: {len(API_KEY)} | TOTP Secret Length: {len(TOTP_TOKEN)}")
-    except Exception as internal_err:
-        logging.error(f"❌ Critical error executing NorenApi framework handshake: {str(internal_err)}")
-        return
-        
-    # Print the raw dictionary payload returned from the server
-    logging.info(f"📡 Debug raw gateway footprint payload: {login_response}")
+    # 3. Construct raw JSON payload exactly as Flattrade's gatekeeper demands
+    payload = {
+        "apkversion": "1.0.0",
+        "uid": CLIENT_CODE,
+        "pwd": hashed_password,
+        "twoFA": raw_totp,
+        "vc": "FTB2C",             # 🌟 Standard retail vendor code for Flattrade
+        "appkey": hashed_api_secret,
+        "imei": "00-00-00-00-00-00",
+        "source": "API"
+    }
     
+    url = "https://piconnect.flattrade.in/PiConnectAPI/QuickAuth"
+    
+    try:
+        logging.info("📡 Firing direct web signature bypass request...")
+        response = requests.post(url, json=f"jData={json.dumps(payload)}", timeout=10)
+        
+        # If the response isn't clean JSON, print the raw network text response
+        logging.info(f"💾 Raw Server HTTP Status Code: {response.status_code}")
+        logging.info(f"📡 Raw Server Text Feedback: {response.text}")
+        
+        login_response = response.json()
+    except Exception as err:
+        logging.error(f"❌ Network channel connection failure: {str(err)}")
+        return
+
     if login_response and login_response.get('stat') == 'Ok':
-        logging.info("🚀 FLATTRADE ROUTER SYSTEM ONLINE. LIVE STREAM ENGAGED.")
+        logging.info("🚀 FLATTRADE DIRECT AUTHENTICATION SUCCESSFUL.")
+        # Store session token inside your API object instance to run the WebSocket later
+        api = FlattradeBotEngine()
+        api.set_session(userid=CLIENT_CODE, token=login_response.get('susertoken'), user_data=login_response)
     else:
-        error_msg = login_response.get('emsg') if isinstance(login_response, dict) else "Empty payload response (None)"
+        error_msg = login_response.get('emsg') if isinstance(login_response, dict) else "Malformed payload data."
         logging.error(f"❌ Flattrade gateway authentication rejected. Server feedback: {error_msg}")
         return
 
