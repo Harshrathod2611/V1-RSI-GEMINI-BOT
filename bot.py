@@ -258,63 +258,56 @@ class CandleAggregator:
 # ENGINE MAIN EXECUTIVE FRAMEWORK
 # ==============================================================================
 def start_flattrade_system():
-    # Instantiate the engine API globally at the start of the function scope
+    # 1. Instantiate the base engine API component
     api = FlattradeBotEngine()
     
-    # 1. Generate dynamic 2FA TOTP token text string
-    totp_generator = pyotp.TOTP(TOTP_TOKEN)
-    raw_totp = str(totp_generator.now())  
-    logging.info(f"🔑 Generating real-time direct handshake for client: {CLIENT_CODE}")
+    # 2. 🌟 MANUALLY INPUT THE GENERATED CODE FROM YOUR BROWSER
+    # Go to: https://auth.flattrade.in/?app_key=YOUR_API_KEY
+    # Log in, copy the string after '?request_code=', and paste it here:
+    print("\n" + "="*60)
+    print("🔑 FLATTRADE OAUTH STEP: Go to the link below in your web browser:")
+    print(f"https://auth.flattrade.in/?app_key={API_KEY}")
+    print("="*60 + "\n")
     
-    # 2. Compute explicit SHA-256 Hashing required for Flattrade QuickAuth web validation
-    hashed_password = hashlib.sha256(PASSWORD.encode('utf-8')).hexdigest()
-    raw_secret_combo = f"{API_KEY}{CLIENT_CODE}"
-    hashed_api_secret = hashlib.sha256(raw_secret_combo.encode('utf-8')).hexdigest()
+    request_code = input("👉 Paste the 'request_code' string from your browser address bar here: ").strip()
     
-    # 3. Construct raw dictionary parameters using specific internal keys
-# 3. Construct raw dictionary parameters using specific internal keys
+    if not request_code:
+        logging.error("❌ A valid request_code must be provided to authorize the session.")
+        return
+
+    # 3. Compute your encrypted application signature token
+    # Flattrade mandates a SHA-256 hex string combining your API Key, Request Code, and Secret Key
+    raw_signature_block = f"{API_KEY}{request_code}{TELEGRAM_CHAT_ID}"  # Note: ensure TELEGRAM_CHAT_ID represents your raw secret key variable here
+    hashed_api_secret = hashlib.sha256(raw_signature_block.encode('utf-8')).hexdigest()
+    
+    token_url = "https://authapi.flattrade.in/trade/apitoken"
+    
     payload = {
-        "apkversion": "1.0.0",
-        "uid": CLIENT_CODE,
-        "pwd": hashed_password,       
-        "factor2": raw_totp,          
-        "vc": "SYMTECH",              # 🌟 FIXED: Universal personal app vendor key for Flattrade
-        "appkey": hashed_api_secret,
-        "imei": "00-00-00-00-00-00",
-        "source": "API"
-    }
-    
-    url = "https://piconnect.flattrade.in/PiConnectAPI/QuickAuth"
-    
-    # 4. 🌟 MANUALLY FORMAT AN UNENCODED BODY STRING
-    # This prevents the library from URL-encoding the JSON punctuation characters
-    clean_json_string = json.dumps(payload, separators=(',', ':'))
-    raw_unencoded_body = f"jData={clean_json_string}"
-    
-    headers = {
-        "Content-Type": "application/x-www-form-urlencoded"
+        "api_key": API_KEY,
+        "request_code": request_code,
+        "api_secret": hashed_api_secret
     }
     
     try:
-        logging.info("📡 Firing raw string stream bypass request to Flattrade gatekeeper...")
-        # Send the string directly as raw data bytes to preserve structural quotes and colons
-        response = requests.post(url, data=raw_unencoded_body.encode('utf-8'), headers=headers, timeout=10)
-        
-        logging.info(f"💾 Raw Server HTTP Status Code: {response.status_code}")
-        logging.info(f"📡 Raw Server Text Feedback: {response.text}")
-        
+        logging.info("📡 Exchanging temporary request_code for an encrypted session token...")
+        response = requests.post(token_url, json=payload, timeout=10)
         login_response = response.json()
+        
+        logging.info(f"💾 Token Server Response: {login_response}")
     except Exception as err:
-        logging.error(f"❌ Network channel connection failure: {str(err)}")
+        logging.error(f"❌ Handshake processing failed: {str(err)}")
         return
 
+    # 4. Check if token generation succeeded 
     if login_response and login_response.get('stat') == 'Ok':
-        logging.info("🚀 FLATTRADE DIRECT AUTHENTICATION SUCCESSFUL. SAVING MATRIX STATE.")
-        # Initialize the session tokens directly inside the wrapper
-        api.set_session(userid=CLIENT_CODE, token=login_response.get('susertoken'), user_data=login_response)
+        session_token = login_response.get('susertoken')
+        logging.info("🚀 FLATTRADE VERSION 2 SECURE AUTHENTICATION SUCCESSFUL.")
+        
+        # Seed token parameters directly into your base execution engine instance
+        api.set_session(userid=CLIENT_CODE, token=session_token, user_data=login_response)
     else:
-        error_msg = login_response.get('emsg') if isinstance(login_response, dict) else "Malformed payload data received."
-        logging.error(f"❌ Flattrade gateway authentication rejected. Server feedback: {error_msg}")
+        error_msg = login_response.get('emsg') if isinstance(login_response, dict) else "Authentication payload rejected."
+        logging.error(f"❌ Flattrade token verification rejected: {error_msg}")
         return
 
     # Seed baseline historical data sets 
