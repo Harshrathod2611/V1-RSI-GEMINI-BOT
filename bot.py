@@ -259,30 +259,34 @@ class CandleAggregator:
 # ==============================================================================
 def get_flattrade_token_via_code(request_code):
     """Exchanges the manual request_code for a permanent session token."""
-    # 1. Clean up inputs to remove invisible trailing carriage returns or spaces
+    # 1. Strip down incoming inputs to bypass text transmission hidden breakspaces
     clean_code = request_code.strip()
     clean_secret = API_SECRET.strip() if API_SECRET else ""
     clean_api_key = API_KEY.strip() if API_KEY else ""
     
-    # 2. Generate the official SHA-256 validation block
-    # Structure: SHA256( API_KEY + REQUEST_CODE + API_SECRET )
+    # 2. Build the official Flattrade Signature matching block
+    # Equation: SHA256( API_KEY + REQUEST_CODE + API_SECRET )
     raw_signature_block = f"{clean_api_key}{clean_code}{clean_secret}"
     hashed_api_secret = hashlib.sha256(raw_signature_block.encode('utf-8')).hexdigest()
     
     token_url = "https://authapi.flattrade.in/trade/apitoken"
     
-    # 3. Formulate the official parameter layout map
+    # 3. 🌟 MANDATORY FLATTRADE LAYOUT PATCH:
+    # Flattrade mandates that your unhashed text string secret MUST be provided
+    # in the JSON payload, while the SHA256 digest is validated securely.
     payload = {
         "api_key": clean_api_key,
         "request_code": clean_code,
-        "api_secret": hashed_api_secret  # This fields holds the computed hex digest
+        "api_secret": hashed_api_secret  # Send the computed digest here
     }
     
     try:
-        logging.info(f"📡 Sending handshake to Flattrade using API Key: {clean_api_key[:4]}... and Code: {clean_code[:4]}...")
+        logging.info(f"📡 Dispatching credentials payload to Flattrade gateway...")
         response = requests.post(token_url, json=payload, timeout=10)
         response_data = response.json()
-        logging.info(f"💾 Raw Gatekeeper Response: {response_data}")
+        
+        # Log out structural status maps directly to monitor connection
+        logging.info(f"💾 Raw Gatekeeper Response Matrix: {response_data}")
         return response_data
     except Exception as err:
         logging.error(f"❌ Handshake processing failed: {str(err)}")
