@@ -258,6 +258,9 @@ class CandleAggregator:
 # ENGINE MAIN EXECUTIVE FRAMEWORK
 # ==============================================================================
 def start_flattrade_system():
+    # Fix Bug 2: Always instantiate api at the very beginning of the function scope
+    api = FlattradeBotEngine()
+    
     # 1. Generate dynamic 2FA TOTP token text string
     totp_generator = pyotp.TOTP(TOTP_TOKEN)
     raw_totp = str(totp_generator.now())  
@@ -267,14 +270,12 @@ def start_flattrade_system():
     raw_secret_combo = f"{API_KEY}{CLIENT_CODE}"
     hashed_api_secret = hashlib.sha256(raw_secret_combo.encode('utf-8')).hexdigest()
     
-    # 3. Construct raw JSON payload parameters
-    # Note: Send your raw PASSWORD string; the server parses it directly via Version 2
-# 3. Construct raw JSON payload parameters
+    # 3. Use the exact internal keys expected by Flattrade's web gateway
     payload = {
         "apkversion": "1.0.0",
         "uid": CLIENT_CODE,
         "pwd": PASSWORD,             
-        "twoFA": raw_totp,
+        "factor2": raw_totp,          # 🌟 Key name updated to match server definition
         "vc": "FTB2C",               
         "appkey": hashed_api_secret,
         "imei": "00-00-00-00-00-00",
@@ -283,19 +284,11 @@ def start_flattrade_system():
     
     url = "https://piconnect.flattrade.in/PiConnectAPI/QuickAuth"
     
-    # 🌟 MANUALLY STRINGIFY THE OUTSIDE STRUCTURE TO PREVENT ESCAPE CORRUPTION
-    # This maps the text structure exactly as Flattrade's background string parser demands
-    raw_payload_string = f"jData={json.dumps(payload)}"
-    
-    # Force the headers to application/x-www-form-urlencoded explicitly
-    headers = {
-        "Content-Type": "application/x-www-form-urlencoded"
-    }
-    
     try:
-        logging.info("📡 Firing raw string-encoded data signature bypass request...")
-        # Pass the raw payload string via data= with explicit headers
-        response = requests.post(url, data=raw_payload_string, headers=headers, timeout=10)
+        logging.info("📡 Firing cleanly encoded data parameter signature request...")
+        # 🌟 Fix Bug 1: Pass the payload via dict format into requests.post(data=...)
+        # This structures the form fields cleanly to satisfy the validation engine
+        response = requests.post(url, data={"jData": json.dumps(payload)}, timeout=10)
         
         logging.info(f"💾 Raw Server HTTP Status Code: {response.status_code}")
         logging.info(f"📡 Raw Server Text Feedback: {response.text}")
@@ -303,6 +296,15 @@ def start_flattrade_system():
         login_response = response.json()
     except Exception as err:
         logging.error(f"❌ Network channel connection failure: {str(err)}")
+        return
+
+    if login_response and login_response.get('stat') == 'Ok':
+        logging.info("🚀 FLATTRADE DIRECT AUTHENTICATION SUCCESSFUL.")
+        # Initialize session tokens directly inside the wrapper
+        api.set_session(userid=CLIENT_CODE, token=login_response.get('susertoken'), user_data=login_response)
+    else:
+        error_msg = login_response.get('emsg') if isinstance(login_response, dict) else "Malformed payload data received."
+        logging.error(f"❌ Flattrade gateway authentication rejected. Server feedback: {error_msg}")
         return
 
     # Seed baseline historical data sets 
@@ -334,5 +336,6 @@ def start_flattrade_system():
     
     while True:
         time.sleep(1)
+        
 if __name__ == "__main__":
     start_flattrade_system()
