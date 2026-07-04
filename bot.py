@@ -53,13 +53,15 @@ VOLUME_MA_PERIOD = 20
 # ==============================================================================
 # FLATTRADE CORE RUNTIME API CLASS INTERFACE
 # ==============================================================================
+# ==============================================================================
+# FLATTRADE CORE RUNTIME API CLASS INTERFACE
+# ==============================================================================
 class FlattradeBotEngine(NorenApi):
     def __init__(self):
-        # Hooks into the Flattrade production server access points
+        # ⚡ UPDATED WITH CORRECT PICONNECT PRODUCTION ENDPOINTS
         NorenApi.__init__(self, 
-                          host='https://piconnect.flattrade.in/PartnerAPI', 
-                          websocket='wss://piconnect.flattrade.in/WSAPI')
-
+                          host='https://piconnect.flattrade.in/PiConnectAPI/', 
+                          websocket='wss://piconnect.flattrade.in/PiConnectWSAPI/')
 # ==============================================================================
 # VISUAL INSIGHTS CHART GENERATOR ENGINE
 # ==============================================================================
