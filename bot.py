@@ -257,7 +257,6 @@ class CandleAggregator:
 # ENGINE MAIN EXECUTIVE FRAMEWORK
 # ==============================================================================
 def start_flattrade_system():
-def start_flattrade_system():
     api = FlattradeBotEngine()
     
     # 1. Generate the dynamic 2FA TOTP token text string
