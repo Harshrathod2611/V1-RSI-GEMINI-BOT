@@ -283,9 +283,10 @@ def start_flattrade_system():
     logging.info(f"🔑 Generating real-time login encryption hash for client: {CLIENT_CODE}")
     
     # Internal session activation protocol
+#  CORRECT FLATTRADE LOGIN METHOD CALL
     login_response = api.login(userid=CLIENT_CODE, password=PASSWORD, 
-                               twoFA=raw_totp, api_key=API_KEY, 
-                               vendor_code=None, app_key=None)
+                               twoFA=raw_totp, vendor_code='', 
+                               api_secret=API_KEY, imei='MAC_ADDRESS')
     
     if login_response and login_response.get('stat') == 'Ok':
         logging.info("🚀 FLATTRADE 24/7 API ROUTER AUTHENTICATED SUCCESSFULLY.")
