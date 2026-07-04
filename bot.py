@@ -276,9 +276,9 @@ def start_flattrade_system():
     payload = {
         "apkversion": "1.0.0",
         "uid": CLIENT_CODE,
-        "pwd": hashed_password,       # Pre-hashed password for direct endpoint parsing
+        "pwd": hashed_password,       
         "factor2": raw_totp,          
-        "vc": CLIENT_CODE,            # 🌟 FIXED: Dynamically sets your Vendor Code to your Client ID (FZ37812)
+        "vc": "SYMTECH",              # 🌟 FIXED: Universal personal app vendor key for Flattrade
         "appkey": hashed_api_secret,
         "imei": "00-00-00-00-00-00",
         "source": "API"
