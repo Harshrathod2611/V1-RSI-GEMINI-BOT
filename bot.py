@@ -263,18 +263,18 @@ def start_flattrade_system():
     raw_totp = str(totp_generator.now())  
     logging.info(f"🔑 Generating real-time direct handshake for client: {CLIENT_CODE}")
     
-    # 2. Compute the exact SHA-256 signatures required by Flattrade
-    hashed_password = hashlib.sha256(PASSWORD.encode('utf-8')).hexdigest()
+    # 2. Compute the exact SHA-256 API Secret Signature Flattrade demands
     raw_secret_combo = f"{API_KEY}{CLIENT_CODE}"
     hashed_api_secret = hashlib.sha256(raw_secret_combo.encode('utf-8')).hexdigest()
     
-    # 3. Construct raw JSON payload exactly as Flattrade's gatekeeper demands
+    # 3. Construct raw JSON payload parameters
+    # Note: Send your raw PASSWORD string; the server parses it directly via Version 2
     payload = {
         "apkversion": "1.0.0",
         "uid": CLIENT_CODE,
-        "pwd": hashed_password,
+        "pwd": PASSWORD,             
         "twoFA": raw_totp,
-        "vc": "FTB2C",             # 🌟 Standard retail vendor code for Flattrade
+        "vc": "FTB2C",               # Default retail vendor code for Flattrade
         "appkey": hashed_api_secret,
         "imei": "00-00-00-00-00-00",
         "source": "API"
@@ -282,11 +282,17 @@ def start_flattrade_system():
     
     url = "https://piconnect.flattrade.in/PiConnectAPI/QuickAuth"
     
+    # 4. 🌟 STRUCTURE AS AN APPLICATION FORM DATA PARAMETER MAP
+    # This wraps the stringified payload inside a proper 'jData' form field
+    form_data = {
+        "jData": json.dumps(payload)
+    }
+    
     try:
-        logging.info("📡 Firing direct web signature bypass request...")
-        response = requests.post(url, json=f"jData={json.dumps(payload)}", timeout=10)
+        logging.info("📡 Firing corrected form-encoded data signature bypass request...")
+        # Use data= instead of json= to enforce application/x-www-form-urlencoded
+        response = requests.post(url, data=form_data, timeout=10)
         
-        # If the response isn't clean JSON, print the raw network text response
         logging.info(f"💾 Raw Server HTTP Status Code: {response.status_code}")
         logging.info(f"📡 Raw Server Text Feedback: {response.text}")
         
@@ -297,8 +303,8 @@ def start_flattrade_system():
 
     if login_response and login_response.get('stat') == 'Ok':
         logging.info("🚀 FLATTRADE DIRECT AUTHENTICATION SUCCESSFUL.")
-        # Store session token inside your API object instance to run the WebSocket later
         api = FlattradeBotEngine()
+        # Initialize the state using the returned user token
         api.set_session(userid=CLIENT_CODE, token=login_response.get('susertoken'), user_data=login_response)
     else:
         error_msg = login_response.get('emsg') if isinstance(login_response, dict) else "Malformed payload data."
@@ -334,6 +340,5 @@ def start_flattrade_system():
     
     while True:
         time.sleep(1)
-
 if __name__ == "__main__":
     start_flattrade_system()
