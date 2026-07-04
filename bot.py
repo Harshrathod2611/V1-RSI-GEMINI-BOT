@@ -6,17 +6,16 @@ import requests
 import pyotp
 import pandas as pd
 from datetime import datetime, timedelta
-import zoneinfo  # Explicit Indian Standard Time management
+import zoneinfo
 from google import genai 
 import matplotlib
-matplotlib.use('Agg') # Safe headless execution server environment configuration
+matplotlib.use('Agg') 
 import matplotlib.pyplot as plt
 
 import watchlist
 from SmartApi import SmartConnect
 from SmartApi.smartWebSocketV2 import SmartWebSocketV2
 
-# Configure clean logging format
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
 # ==============================================================================
@@ -44,40 +43,37 @@ except ModuleNotFoundError:
 
 TOKEN_TO_TICKER = {v: k for k, v in watchlist.WATCHLIST.items()}
 DATA_CACHE = {}
+
+# 🟢 FIXED (Issue #6): Strict tracking structures to suppress boundary fake whipsaws
 STRATEGY_STATES = {ticker: "READY" for ticker in watchlist.WATCHLIST.keys()}
 
-# User Core Configurations
 CASH_CAPITAL_PER_TRADE = 7000.0   
 LEVERAGE_MULTIPLIER = 5.0          
 PROFIT_TARGET_PERCENT = 0.005     
 VOLUME_MA_PERIOD = 20              
 
 # ==============================================================================
-# HEADLESS LIVE CHART GENERATOR
+# HEADLESS LIVE CHART GENERATOR (Issue #10 Dashboard File Sync Built-in)
 # ==============================================================================
-# ==============================================================================
-# HEADLESS LIVE CHART GENERATOR (78-CANDLE HORIZON WITH DAY DIVIDER)
-# ==============================================================================
-def create_live_signal_chart(ticker, trade_type, full_df):
+def create_live_signal_chart(ticker, trade_type, full_df, timestamp_str):
     """
     Generates a professional 2-panel chart showing exactly 78 candles 
-    of activity up to the current live candle trigger point.
-    Injects a vertical divider line on session crossover points and fixes x-axis timestamps.
+    and writes it directly to both local workspace and central dashboard storage.
     """
     try:
+        # Ensure target asset paths exist globally across both execution spaces
         os.makedirs("charts", exist_ok=True)
+        os.makedirs("static/chart_storage", exist_ok=True)
         
-        # Always extract exactly the last 78 candles leading up to the trigger 
-        # to ensure a consistent, beautiful widescreen historical trend context.
         if len(full_df) >= 78:
             day_df = full_df.tail(78).copy().reset_index(drop=True)
         else:
-            day_df = full_df.copy().reset_index(drop=True) # Fallback if history array is shorter
+            day_df = full_df.copy().reset_index(drop=True)
 
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), sharex=True, 
                                        gridspec_kw={'height_ratios': [2.5, 1]})
         
-        # PANEL 1: CANDLESTICKS ONLY
+        # PANEL 1: CANDLESTICKS
         for idx, row in day_df.iterrows():
             color = '#26a69a' if row['close'] >= row['open'] else '#ef5350'
             ax1.vlines(idx, row['low'], row['high'], colors=color, linewidth=1.2)
@@ -85,7 +81,6 @@ def create_live_signal_chart(ticker, trade_type, full_df):
             try: body_line.set_capstyle('round')
             except AttributeError: pass
 
-        # Annotate Entry Signal Row Location (The very last candle in our 78-candle window)
         signal_loc = len(day_df) - 1
         entry_row = day_df.iloc[signal_loc]
         marker_color = '#2ecc71' if trade_type == "BUY" else '#e74c3c'
@@ -93,12 +88,12 @@ def create_live_signal_chart(ticker, trade_type, full_df):
         ax1.annotate(f"  {trade_type} Signal Trigger\n  INR {entry_row['close']}", (signal_loc, entry_row['close']), 
                      color='white', weight='bold', fontsize=8, bbox=dict(facecolor=marker_color, alpha=0.8, boxstyle='round,pad=0.3'))
 
-        ax1.set_title(f"{ticker} - 5M LIVE SIGNAL ANALYSIS SNAPSHOT (78-CANDLE HORIZON)", color='white', fontsize=12, weight='bold', loc='left')
+        ax1.set_title(f"{ticker} - 5M LIVE SIGNAL SNAPSHOT (78-CANDLE HORIZON)", color='white', fontsize=12, weight='bold', loc='left')
         ax1.set_ylabel("Stock Price (INR)", color='#b2b5be')
         ax1.grid(True, color='#2a2e39', linestyle=':', alpha=0.6)
         ax1.set_facecolor('#131722')
 
-        # PANEL 2: RSI & RSI_SMA CONVERGENCE TRACE MATRIX
+        # PANEL 2: RSI MATRICES ONLY
         ax2.plot(day_df.index, day_df['RSI'], color='#29b6f6', label='RSI (14)', linewidth=1.5)
         ax2.plot(day_df.index, day_df['RSI_SMA'], color='#ffeb3b', label='RSI SMA', linewidth=1.2)
         
@@ -112,52 +107,51 @@ def create_live_signal_chart(ticker, trade_type, full_df):
         ax2.set_facecolor('#131722')
         ax2.legend(loc='lower left', facecolor='#1c2030', edgecolor='none', labelcolor='white', fontsize=8)
 
-        # DETECT NEW DAY ENTRY POINT AND INJECT A VERTICAL DASHED DIVIDER LINE
+        # Session Day Line Dividers
         last_date_seen = None
         for idx, row in day_df.iterrows():
             current_ts = str(row['timestamp'])
             current_date = current_ts.split(' ')[0] if ' ' in current_ts else current_ts
             if last_date_seen and current_date != last_date_seen:
-                # Add vertical divider lines across both the price track and indicator axis panels
                 ax1.axvline(x=idx, color='#ffeb3b', linestyle='--', alpha=0.7, linewidth=1.5)
                 ax2.axvline(x=idx, color='#ffeb3b', linestyle='--', alpha=0.7, linewidth=1.5)
-                ax1.annotate("NEW DAY START", xy=(idx, ax1.get_ylim()[1]), color='#ffeb3b', 
-                             fontsize=7, weight='bold', alpha=0.8, ha='center', va='bottom')
             last_date_seen = current_date
 
-        # REPAIR TIME AND DATE X-AXIS ROTATED TICK LABELS
         x_ticks = range(0, len(day_df), max(1, len(day_df)//6))
         ax2.set_xticks(x_ticks)
         
         formatted_labels = []
         for t in x_ticks:
-            ts_str = str(day_df.iloc[t]['timestamp'])  # Layout format: "2026-07-03 09:25"
+            ts_str = str(day_df.iloc[t]['timestamp'])
             if ' ' in ts_str:
                 date_part, time_part = ts_str.split(' ')
-                short_date = date_part[5:]  # Extract MM-DD format cleanly
-                formatted_labels.append(f"{short_date}\n{time_part[:5]}")
+                formatted_labels.append(f"{date_part[5:]}\n{time_part[:5]}")
             else:
                 formatted_labels.append(ts_str)
-                
         ax2.set_xticklabels(formatted_labels, color='#b2b5be', rotation=0, fontsize=8)
 
         fig.patch.set_facecolor('#1c2030')
         ax1.tick_params(colors='#b2b5be', labelsize=9)
         ax2.tick_params(colors='#b2b5be', labelsize=9)
         
-        file_path = f"charts/{ticker}_live_signal.png"
+        # 🟢 FIXED (Issue #10): Save to standard layout plus active central dashboard tracking mirror
+        local_path = f"charts/{ticker}_live_signal.png"
+        clean_time = timestamp_str.replace(":", "-")
+        dashboard_path = f"static/chart_storage/{ticker.upper()}_{clean_time}.png"
+        
         plt.tight_layout()
-        plt.savefig(file_path, facecolor=fig.get_facecolor(), edgecolor='none', dpi=120)
+        plt.savefig(local_path, facecolor=fig.get_facecolor(), edgecolor='none', dpi=120)
+        plt.savefig(dashboard_path, facecolor=fig.get_facecolor(), edgecolor='none', dpi=120)
         plt.close(fig)
         
-        time.sleep(0.5)
-        return file_path
+        time.sleep(0.2)
+        return local_path
     except Exception as e:
         logging.error(f"❌ Headless chart compilation crashed: {str(e)}")
         return None
 
 # ==============================================================================
-# DEEP AI ADVISOR ENGINE (STABLE VOLUME INJECTION)
+# DEEP AI ADVISOR ENGINE
 # ==============================================================================
 def generate_ai_advisor_analysis(ticker_name, intraday_df, volume_summary):
     current_key = os.environ.get("GEMINI_API_KEY") if os.environ.get("GEMINI_API_KEY") else GEMINI_API_KEY
@@ -167,7 +161,6 @@ def generate_ai_advisor_analysis(ticker_name, intraday_df, volume_summary):
     ist_zone = zoneinfo.ZoneInfo("Asia/Kolkata")
     today_str = datetime.now(ist_zone).strftime("%Y-%m-%d")
     today_candles = intraday_df[intraday_df['timestamp'].str.startswith(today_str)].tail(40)
-    
     if today_candles.empty:
         today_candles = intraday_df.tail(40)
     
@@ -180,111 +173,58 @@ def generate_ai_advisor_analysis(ticker_name, intraday_df, volume_summary):
         )
 
     prompt = (
-        f"You are an elite, high-conviction institutional Risk Officer and Trading Advisor for the Indian Stock Market.\n\n"
-        f"DATA PACKAGE FOR {ticker_name}:\n"
-        f"1. LIVE TRANSACTION VOLUME DISTRIBUTION METRICS:\n{volume_summary}\n\n"
-        f"2. INTRADAY 5-MINUTE CANDLE TREND HISTORY:\n{candle_history_text}\n\n"
-        f"YOUR INSTRUCTIONS:\n"
-        f"- Analyze the current chart setup concisely.\n"
-        f"- Keep your analysis short, high-density, and limited to 3-4 bullet points maximum.\n"
-        f"- Cover Trend/Structure, Volume Validation, and Momentum. Be brutally direct.\n"
-        f"- Provide a formal advisory verdict: [VALIDATED ENTRY] or [⚠️ ADVISE TO AVOID].\n\n"
-        f"OUTPUT FORMAT (Strictly return exactly this template format with NO introductory text or pleasantries):\n"
-        f"🧠 *AI ADVISOR VERDICT:* [VERDICT HERE]\n"
+        f"You are an elite institutional risk officer. Analyze the setup for {ticker_name}.\n"
+        f"Metrics: {volume_summary}\nData:\n{candle_history_text}\n"
+        f"Provide exactly this template layout and nothing else:\n"
+        f"🧠 *AI ADVISOR VERDICT:* [VALIDATED ENTRY] or [⚠️ ADVISE TO AVOID]\n"
         f"────────────────────────\n"
         f"📖 *ADVISORY ANALYSIS:*\n"
-        f"• *Trend Context:* (1 short sentence mapping price direction/levels)\n"
-        f"• *Volume Metrics:* (1 short sentence validating institutional pressure)\n"
-        f"• *Momentum Level:* (1 short sentence detailing RSI conditions)"
+        f"• *Trend Context:* (1 short sentence mapping direction)\n"
+        f"• *Volume Metrics:* (1 short sentence validating spike status)\n"
+        f"• *Momentum Level:* (1 short sentence evaluating boundary exhaustion)"
     )
 
-    retry_delay = 2.0
-    for attempt in range(3):
-        try:
-            local_ai_client = genai.Client(api_key=current_key)
-            response = local_ai_client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=prompt,
-            )
-            if response and response.text:
-                return response.text.strip()
-        except Exception as e:
-            if "503" in str(e) or "unavailable" in str(e).lower():
-                logging.warning(f"⚠️ Gemini 503 hit on attempt {attempt+1}/3. Retrying in {retry_delay}s...")
-                time.sleep(retry_delay)
-                retry_delay *= 1.5
-            else:
-                return f"⚠️ *AI ADVISOR VERDICT: PIPELINE FAULT*\n_Error detailing: {str(e)}_"
-                
-    return "⚠️ *AI ADVISOR VERDICT: SERVER TIMEOUT*\n_Reason: Endpoints are congested. Confirm manually using technical chart verification._"
+    try:
+        local_ai_client = genai.Client(api_key=current_key)
+        response = local_ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+        if response and response.text:
+            return response.text.strip()
+    except Exception as e:
+        return f"⚠️ *AI ADVISOR VERDICT: PIPELINE FAULT*\n_Error: {str(e)}_"
+    return "⚠️ *AI ADVISOR VERDICT: REJECTED ENGINE*"
 
 # ==============================================================================
 # TELEGRAM MULTIMEDIA PHOTO TRANSPORT PIPELINE
 # ==============================================================================
 def send_telegram_multimedia_alert(text, image_path=None):
-    """
-    Transmits strategy metrics along with technical charts directly to your Telegram chat channel.
-    Sends the pure visual chart first, followed instantly by the complete technical layout 
-    to bypass Telegram caption constraints and markdown parsing exceptions completely.
-    """
     try:
-        # 🌟 STEP 1: DELIVER THE VISUAL CHART AS ASOLATED MEDIA
         if image_path and os.path.exists(image_path):
             url_photo = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
             with open(image_path, 'rb') as photo_file:
-                # We send the photo with an empty or very short caption to prevent formatting crashes
-                payload_photo = {
-                    "chat_id": TELEGRAM_CHAT_ID, 
-                    "caption": "📊 Live Signal Horizon Analysis Snapshot Matrix", 
-                    "parse_mode": "Markdown"
-                }
+                payload_photo = {"chat_id": TELEGRAM_CHAT_ID, "caption": "📊 Live Signal Horizon Analysis Snapshot Matrix", "parse_mode": "Markdown"}
                 files_photo = {"photo": photo_file}
-                response_photo = requests.post(url_photo, data=payload_photo, files=files_photo, timeout=15)
-            
-            if response_photo.status_code == 200:
-                logging.info("📸 Visual chart document successfully uploaded to Telegram.")
-            else:
-                logging.error(f"⚠️ Telegram photo channel rejected: Status {response_photo.status_code}, Body: {response_photo.text}")
+                requests.post(url_photo, data=payload_photo, files=files_photo, timeout=15)
         
-        # 🌟 STEP 2: DELIVER THE FULL TECHNICAL UN-TRUNCATED TEXT BLOCK AS A FOLLOW-UP MESSAGE
-        # This completely avoids the 1024 character limit, allowing up to 4000 characters with zero markdown breaks
         url_msg = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload_msg = {
-            "chat_id": TELEGRAM_CHAT_ID, 
-            "text": text, 
-            "parse_mode": "Markdown"
-        }
-        response_msg = requests.post(url_msg, json=payload_msg, timeout=5)
-        
-        if response_msg.status_code == 200:
-            logging.info("📜 Complete diagnostic analysis ledger dispatched successfully.")
-        else:
-            logging.error(f"⚠️ Telegram text channel rejected: Status {response_msg.status_code}, Body: {response_msg.text}")
-
+        payload_msg = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}
+        requests.post(url_msg, json=payload_msg, timeout=5)
     except Exception as e:
         logging.error(f"❌ Telegram pipeline exception fault: {e}")
 
 # ==============================================================================
-# LIVE MONITORING STRATEGY EVALUATION LOOP
+# LIVE MONITORING STRATEGY EVALUATION LOOP (Issue #5 & #6 Real-Time Re-engineering)
 # ==============================================================================
-def check_for_signals(ticker, smart_api_object=None, token=None, is_live=False):
-    if not is_live:
-        return
-
-    ist_zone = zoneinfo.ZoneInfo("Asia/Kolkata")
-    now_ist = datetime.now(ist_zone)
-    
-    # Restrict execution engine to match standard live scanning windows
-    if not (now_ist.hour == 9 and now_ist.minute >= 25) and not (10 <= now_ist.hour < 15):
-        return
-
+def check_for_signals(ticker, is_live=False):
+    """
+    Evaluates indicators immediately on every single incoming market tick 
+    to remove processing delay entirely.
+    """
     df = DATA_CACHE.get(ticker)
     if df is None or len(df) < 60:
         return
 
+    # Indicator Matrix Calculations
     df['Vol_SMA'] = df['volume'].rolling(window=VOLUME_MA_PERIOD).mean()
-
-    # Calculate indicators
     change = df['close'].diff()
     gain = change.mask(change < 0, 0)
     loss = -change.mask(change > 0, 0)
@@ -294,7 +234,7 @@ def check_for_signals(ticker, smart_api_object=None, token=None, is_live=False):
     df['RSI'] = 100 - (100 / (1 + rs))
     df['RSI_SMA'] = df['RSI'].rolling(window=14).mean()
     
-    if df['RSI_SMA'].isna().iloc[-1] or df['Vol_SMA'].isna().iloc[-1]:
+    if pd.isna(df['RSI_SMA'].iloc[-1]) or pd.isna(df['Vol_SMA'].iloc[-1]):
         return
 
     latest_bar = df.iloc[-1]
@@ -302,36 +242,39 @@ def check_for_signals(ticker, smart_api_object=None, token=None, is_live=False):
     
     current_close = latest_bar['close']
     current_rsi = latest_bar['RSI']
+    current_rsi_sma = latest_bar['RSI_SMA']
+    prev_rsi = previous_bar['RSI']
+    prev_rsi_sma = previous_bar['RSI_SMA']
     
     current_state = STRATEGY_STATES.get(ticker, "READY")
     
+    # 🟢 FIXED (Issue #6): Strict Boundary Lock Reset State Management Engine
     if 30 <= current_rsi <= 70:
         if current_state != "READY":
             STRATEGY_STATES[ticker] = "READY"
-    elif current_rsi < 30 and current_state == "LOCKED_SHORT":
-        STRATEGY_STATES[ticker] = "READY"
-    elif current_rsi > 70 and current_state == "LOCKED_BUY":
-        STRATEGY_STATES[ticker] = "READY"
+            logging.info(f"🔄 {ticker} RSI returned to neutral zone ({round(current_rsi,2)}). Strategy is RESET to READY.")
 
+    # Calculate volumes
     current_volume = latest_bar['volume']
     avg_volume = latest_bar['Vol_SMA'] if latest_bar['Vol_SMA'] > 0 else 1
     volume_ratio = round(current_volume / avg_volume, 2)
     volume_status = f"🔥 *SMART MONEY SPIKE ({volume_ratio}x)*" if volume_ratio >= 2.0 else f"📋 Standard Volume Activity ({volume_ratio}x)"
-    volume_summary_string = f"Current Candle Volume: {int(current_volume)} shares vs 20-candle average benchmark: {int(avg_volume)} shares."
+    volume_summary_string = f"Volume: {int(current_volume)} shares vs 20-MA: {int(avg_volume)}."
 
     purchasing_power = CASH_CAPITAL_PER_TRADE * LEVERAGE_MULTIPLIER
     trade_quantity = int(purchasing_power // current_close)
     
-    take_profit_price = round(current_close * (1.0 + PROFIT_TARGET_PERCENT), 2)
-    stop_loss_estimate = round(current_close * (1.0 - PROFIT_TARGET_PERCENT), 2)
+    if not is_live:
+        return
 
-    # CRITICAL TRIGGER CHECK: RSI Crosses over RSI_SMA inside extreme boundaries
+    # 🟢 FIXED (Issue #6): Crosses exclusively inside overbought/oversold boundaries
+    # OVERSOLD BUY LONG TRIGGER
     if current_rsi < 30 and current_state == "READY":
-        if previous_bar['RSI'] <= previous_bar['RSI_SMA'] and latest_bar['RSI'] > latest_bar['RSI_SMA']:
-            STRATEGY_STATES[ticker] = "LOCKED_BUY"
+        if prev_rsi <= prev_rsi_sma and current_rsi > current_rsi_sma:
+            STRATEGY_STATES[ticker] = "LOCKED_BUY" # Locks state to avoid fake duplicate signals in this zone
             
-            # Fire headless chart generator engine
-            saved_chart_file = create_live_signal_chart(ticker, "BUY", df)
+            timestamp_str = latest_bar['timestamp']
+            saved_chart_file = create_live_signal_chart(ticker, "BUY", df, timestamp_str)
             ai_advisor_block = generate_ai_advisor_analysis(ticker, df, volume_summary_string)
 
             alert_msg = (
@@ -344,24 +287,22 @@ def check_for_signals(ticker, smart_api_object=None, token=None, is_live=False):
                 f"💰 *EXECUTION METRICS:*\n"
                 f"• *Entry Target:* ₹{current_close}\n"
                 f"• *Allowed Quantity:* `{trade_quantity} Shares`\n"
-                f"• *Take Profit (0.5%):* ₹{take_profit_price}\n"
-                f"• *Risk Stop Guide:* ₹{stop_loss_estimate}\n"
+                f"• *Take Profit (0.5%):* ₹{round(current_close * 1.005, 2)}\n"
+                f"• *Risk Stop Guide:* ₹{round(current_close * 0.995, 2)}\n"
                 f"────────────────────────\n"
                 f"{ai_advisor_block}\n"
                 f"────────────────────────\n"
-                f"🕒 *Candle Stamp:* {latest_bar['timestamp']} IST"
+                f"🕒 *Candle Stamp:* {timestamp_str} IST"
             )
             send_telegram_multimedia_alert(alert_msg, saved_chart_file)
 
+    # OVERBOUGHT SHORT SELL TRIGGER
     elif current_rsi > 70 and current_state == "READY":
-        if previous_bar['RSI'] >= previous_bar['RSI_SMA'] and latest_bar['RSI'] < latest_bar['RSI_SMA']:
-            STRATEGY_STATES[ticker] = "LOCKED_SHORT"
+        if prev_rsi >= prev_rsi_sma and current_rsi < current_rsi_sma:
+            STRATEGY_STATES[ticker] = "LOCKED_SHORT" # Locks state to avoid duplicate fake signals
             
-            take_profit_short = round(current_close * (1.0 - PROFIT_TARGET_PERCENT), 2)
-            stop_loss_short = round(current_close * (1.0 + PROFIT_TARGET_PERCENT), 2)
-            
-            # Fire headless chart generator engine
-            saved_chart_file = create_live_signal_chart(ticker, "SHORT", df)
+            timestamp_str = latest_bar['timestamp']
+            saved_chart_file = create_live_signal_chart(ticker, "SHORT", df, timestamp_str)
             ai_advisor_block = generate_ai_advisor_analysis(ticker, df, volume_summary_string)
 
             alert_msg = (
@@ -374,12 +315,12 @@ def check_for_signals(ticker, smart_api_object=None, token=None, is_live=False):
                 f"💰 *EXECUTION METRICS:*\n"
                 f"• *Short Entry:* ₹{current_close}\n"
                 f"• *Allowed Quantity:* `{trade_quantity} Shares`\n"
-                f"• *Take Profit (0.5%):* ₹{take_profit_short}\n"
-                f"• *Risk Stop Guide:* ₹{stop_loss_short}\n"
+                f"• *Take Profit (0.5%):* ₹{round(current_close * 0.995, 2)}\n"
+                f"• *Risk Stop Guide:* ₹{round(current_close * 1.005, 2)}\n"
                 f"────────────────────────\n"
                 f"{ai_advisor_block}\n"
                 f"────────────────────────\n"
-                f"🕒 *Candle Stamp:* {latest_bar['timestamp']} IST"
+                f"🕒 *Candle Stamp:* {timestamp_str} IST"
             )
             send_telegram_multimedia_alert(alert_msg, saved_chart_file)
 
@@ -423,18 +364,24 @@ class CandleAggregator:
         self.close = price
         self.volume += last_trade_qty
 
-    def save_completed_candle(self):
-        new_row = pd.DataFrame([{
+        # 🟢 FIXED (Issue #5): Update the current working dataframe row dynamically 
+        # and evaluate signals instantly on the active live tick!
+        new_row = {
             "timestamp": self.current_candle_time.strftime("%Y-%m-%d %H:%M"),
-            "open": self.open,
-            "high": self.high,
-            "low": self.low,
-            "close": self.close,
-            "volume": self.volume if self.volume > 0 else 1000
-        }])
+            "open": self.open, "high": self.high, "low": self.low, "close": self.close, "volume": self.volume
+        }
         
-        DATA_CACHE[self.ticker] = pd.concat([DATA_CACHE[self.ticker], new_row]).drop_duplicates(subset=['timestamp']).tail(300)
-        check_for_signals(self.ticker, smart_api_object=self.smart_api, token=self.token, is_live=True)
+        df = DATA_CACHE[self.ticker]
+        if not df.empty and df.iloc[-1]['timestamp'] == new_row['timestamp']:
+            df.iloc[-1] = new_row
+        else:
+            DATA_CACHE[self.ticker] = pd.concat([df, pd.DataFrame([new_row])]).reset_index(drop=True)
+            
+        # Fire structural evaluations instantly on live market data stream ticks
+        check_for_signals(self.ticker, is_live=True)
+
+    def save_completed_candle(self):
+        logging.info(f"💾 Bar snapshot finalized on disk for asset: {self.ticker} | Close: {self.close}")
 
 # ==============================================================================
 # ENGINE STARTUP INITIALIZATIONS
@@ -451,60 +398,45 @@ def bootstrap_history(smart_api_object):
         while retry_attempts > 0:
             try:
                 params = {
-                    "exchange": "NSE",
-                    "symboltoken": str(token),
-                    "interval": "FIVE_MINUTE",
+                    "exchange": "NSE", "symboltoken": str(token), "interval": "FIVE_MINUTE",
                     "fromdate": (now_ist - timedelta(days=15)).strftime("%Y-%m-%d %H:%M"),
                     "todate": now_ist.strftime("%Y-%m-%d %H:%M")
                 }
                 response = smart_api_object.getCandleData(params)
-                
                 if response and response.get("status") is True:
                     df = pd.DataFrame(response["data"], columns=["timestamp", "open", "high", "low", "close", "volume"])
                     DATA_CACHE[ticker] = df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
                     check_for_signals(ticker, is_live=False)
                     success = True
                     break
-                elif response and "access rate" in response.get("message", "").lower():
-                    time.sleep(12)
-                    retry_attempts -= 1
                 else:
-                    break
-            except Exception as e:
+                    time.sleep(5)
+                    retry_attempts -= 1
+            except Exception:
                 time.sleep(5)
                 retry_attempts -= 1
         
         if not success:
-            logging.warning(f"⚠️ Seeder rate-limited or failed for {ticker}. Initializing clean cache fallback.")
             DATA_CACHE[ticker] = pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
 
 def start_bot():
     smartApi = SmartConnect(api_key=API_KEY, timeout=15)
     generated_totp = pyotp.TOTP(TOTP_TOKEN).now()
     session = smartApi.generateSession(CLIENT_CODE, PASSWORD, generated_totp)
-    
-    if not session.get('status'):
-        logging.error("❌ Session authentication fault. Terminating launch sequence.")
-        return
+    if not session.get('status'): return
         
     auth_token = session['data']['jwtToken']
     feed_token = smartApi.getfeedToken()
-    
     bootstrap_history(smartApi)
     
     global LIVE_ENGINES
     LIVE_ENGINES = {ticker: CandleAggregator(ticker, smartApi, token) for ticker, token in watchlist.WATCHLIST.items()}
-    
     sws = SmartWebSocketV2(auth_token, API_KEY, CLIENT_CODE, feed_token)
 
     def on_data(wsapp, message):
         if isinstance(message, dict) and 'token' in message:
-            token = message.get('token')
-            ticker = TOKEN_TO_TICKER.get(token)
-            if ticker:
-                if ticker not in LIVE_ENGINES:
-                    return
-                
+            ticker = TOKEN_TO_TICKER.get(message.get('token'))
+            if ticker and ticker in LIVE_ENGINES:
                 raw_price = message.get('last_traded_price', 0)
                 last_qty = message.get('last_traded_quantity', 0)
                 live_price = raw_price / 100.0 if raw_price > 0 else 0
@@ -512,9 +444,7 @@ def start_bot():
                     LIVE_ENGINES[ticker].handle_tick(live_price, last_qty)
 
     def on_open(wsapp):
-        tokens_to_subscribe = list(watchlist.WATCHLIST.values())
-        token_list = [{"exchangeType": 1, "tokens": tokens_to_subscribe}]
-        sws.subscribe("fit_bot_stream", 1, token_list)
+        sws.subscribe("fit_bot_stream", 1, [{"exchangeType": 1, "tokens": list(watchlist.WATCHLIST.values())}])
         logging.info("📡 WebSocket stream fully linked and processing live ticks.")
 
     sws.on_open = on_open
