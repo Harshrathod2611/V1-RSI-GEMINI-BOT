@@ -278,6 +278,8 @@ def start_flattrade_system():
             api_secret=hashed_api_secret, 
             imei='00-00-00-00-00-00'     # ⚡ Changed to a standard MAC address structure to prevent parser crash
         )
+        logging.info(f"DEBUG - Client Length: {len(CLIENT_CODE)} | Password Length: {len(PASSWORD)}")
+        logging.info(f"DEBUG - API Key Length: {len(API_KEY)} | TOTP Secret Length: {len(TOTP_TOKEN)}")
     except Exception as internal_err:
         logging.error(f"❌ Critical error executing NorenApi framework handshake: {str(internal_err)}")
         return
