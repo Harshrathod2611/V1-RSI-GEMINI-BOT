@@ -259,14 +259,20 @@ class CandleAggregator:
 # ==============================================================================
 def get_flattrade_token_via_code(request_code):
     """Exchanges the manual request_code for a permanent session token."""
-    # Compute signature with explicit API Secret instead of Chat ID
-    raw_signature_block = f"{API_KEY}{request_code}{API_SECRET}"
+    # 🌟 CLEAN UP INPUT: Automatically strips hidden whitespaces or newline jumps
+    clean_code = request_code.strip()
+    
+    # Clean up the secret key from your environment as well just in case
+    clean_secret = API_SECRET.strip() if API_SECRET else ""
+    
+    # Compute signature with explicit API Secret and stripped code
+    raw_signature_block = f"{API_KEY}{clean_code}{clean_secret}"
     hashed_api_secret = hashlib.sha256(raw_signature_block.encode('utf-8')).hexdigest()
     
     token_url = "https://authapi.flattrade.in/trade/apitoken"
     payload = {
         "api_key": API_KEY,
-        "request_code": request_code,
+        "request_code": clean_code,
         "api_secret": hashed_api_secret
     }
     
