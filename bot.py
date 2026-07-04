@@ -22,7 +22,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(me
 # ==============================================================================
 # ENVIRONMENT VARIABLES DUAL-USE PARSING SYSTEM
 # ==============================================================================
-# Priority 1: Check if running on Cloud Containers (Railway)
 if os.environ.get("CLIENT_CODE"):
     CLIENT_CODE = os.environ.get("CLIENT_CODE")
     PASSWORD = os.environ.get("PASSWORD")
@@ -31,9 +30,10 @@ if os.environ.get("CLIENT_CODE"):
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
     TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
     GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+    # Fetching the dedicated API Secret Key environment variable to fix hash block
+    API_SECRET = os.environ.get("API_SECRET") 
     logging.info("☁️ RAILWAY CONTAINER METRICS: Loaded cleanly from platform variables vault.")
 else:
-    # Priority 2: Fall back to local config for debugging
     try:
         import config
         CLIENT_CODE = config.CLIENT_CODE
@@ -43,6 +43,7 @@ else:
         TELEGRAM_BOT_TOKEN = config.TELEGRAM_BOT_TOKEN
         TELEGRAM_CHAT_ID = config.TELEGRAM_CHAT_ID
         GEMINI_API_KEY = config.GEMINI_API_KEY
+        API_SECRET = getattr(config, "API_SECRET", "YOUR_LOCAL_SECRET_FALLBACK")
         logging.info("💻 LOCAL ENVIRONMENT METRICS: config.py file parsed cleanly.")
     except ModuleNotFoundError:
         logging.error("❌ CRITICAL: Configuration variables not found on platform or local workspace.")
@@ -58,7 +59,6 @@ VOLUME_MA_PERIOD = 20
 
 class FlattradeBotEngine(NorenApi):
     def __init__(self):
-        # Initialize precisely with the verified PiConnect endpoints
         NorenApi.__init__(self, 
                           host='https://piconnect.flattrade.in/PiConnectAPI/', 
                           websocket='wss://piconnect.flattrade.in/PiConnectWSAPI/')
@@ -255,12 +255,12 @@ class CandleAggregator:
         check_for_signals(self.ticker, is_live=True, current_bid_depth=bid_qty, current_ask_depth=ask_qty)
 
 # ==============================================================================
-# ENGINE MAIN EXECUTIVE FRAMEWORK
+# SECURE INTERACTIVE WEB-HOOK TO EXCHAGE TOKENS OVER TELEGRAM
 # ==============================================================================
 def get_flattrade_token_via_code(request_code):
     """Exchanges the manual request_code for a permanent session token."""
-    # Compute your encrypted application signature token
-    raw_signature_block = f"{API_KEY}{request_code}{TELEGRAM_CHAT_ID}" # Make sure TELEGRAM_CHAT_ID holds your raw API secret string here
+    # Compute signature with explicit API Secret instead of Chat ID
+    raw_signature_block = f"{API_KEY}{request_code}{API_SECRET}"
     hashed_api_secret = hashlib.sha256(raw_signature_block.encode('utf-8')).hexdigest()
     
     token_url = "https://authapi.flattrade.in/trade/apitoken"
@@ -278,20 +278,21 @@ def get_flattrade_token_via_code(request_code):
         logging.error(f"❌ Handshake processing failed: {str(err)}")
         return None
 
+# ==============================================================================
+# ENGINE MAIN EXECUTIVE FRAMEWORK
+# ==============================================================================
 def start_flattrade_system():
     api = FlattradeBotEngine()
     
-    # 1. 🌟 TELEGRAM SIGNAL ROUTING FOR HEADLESS CONTAINER
-    # Send the login link straight to your phone instead of the dead console log
+    # 1. Dispatch secure clickable interactive prompt straight to your mobile device
     auth_url = f"https://auth.flattrade.in/?app_key={API_KEY}"
     init_message = (
-        "🔐 *FLATTRADE DAILY AUTHENTICATION REQUIRED*\n\n"
-        "1. Click the link below to authenticate via your browser:\n"
-        f"[Click Here to Login]({auth_url})\n\n"
-        "2. Once done, copy the `request_code` from the redirect URL and reply to this message with it!"
+        "🔐 *FLATTRADE AUTHENTICATION REQUIRED*\n\n"
+        "1. Click the link below to verify identity:\n"
+        f"[Click Here to Securely Login]({auth_url})\n\n"
+        "2. Copy the token code parameter from your address bar and reply to this message directly."
     )
     
-    # Dispatch alert link directly to your Telegram chat
     try:
         telegram_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         requests.post(telegram_url, json={
@@ -299,18 +300,17 @@ def start_flattrade_system():
             "text": init_message,
             "parse_mode": "Markdown"
         })
-        logging.info("📨 Dispatched interactive authentication card to Telegram.")
+        logging.info("📨 Dispatched interactive login interface configuration link to Telegram.")
     except Exception as telegram_err:
         logging.error(f"❌ Failed to dispatch bootstrap alert link: {str(telegram_err)}")
 
-    # 2. ⏳ POLL TELEGRAM COMPLIANCE PIPELINE FOR USER RESPONSE
-    # Since Railway is headless, we wait for you to reply on Telegram
-    logging.info("⏳ System idling. Waiting for request_code from Telegram channel wrapper...")
+    logging.info("⏳ Container engine idling. Monitoring background matrix for Telegram text payload...")
     
     offset = None
     session_token = None
     login_response = None
     
+    # 2. Dynamic event loop checking Telegram for your reply string
     while not session_token:
         try:
             updates_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
@@ -326,28 +326,26 @@ def start_flattrade_system():
                     message = update.get("message", {})
                     text_body = message.get("text", "").strip()
                     
-                    # Verify message originates from your verified chat
                     if str(message.get("chat", {}).get("id")) == str(TELEGRAM_CHAT_ID) and len(text_body) > 10:
-                        logging.info(f"📨 Intercepted request_code input from Telegram stream: {text_body}")
+                        logging.info("📨 Intercepted request_code input from Telegram stream.")
                         
-                        # Process token exchange
+                        # Process token verification using your copied code string
                         login_response = get_flattrade_token_via_code(text_body)
                         if login_response and login_response.get('stat') == 'Ok':
                             session_token = login_response.get('susertoken')
                             break
                         else:
-                            emsg = login_response.get('emsg', 'Invalid signature match') if login_response else "Server timed out."
+                            emsg = login_response.get('emsg', 'Invalid API Signature combo') if login_response else "Server timed out."
                             requests.post(telegram_url, json={
                                 "chat_id": TELEGRAM_CHAT_ID,
-                                "text": f"❌ Token rejected by Flattrade: {emsg}. Please try logging in again."
+                                "text": f"❌ Token rejected by Flattrade: {emsg}. Check your API_SECRET variable."
                             })
         except Exception as poll_err:
             logging.error(f"⚠️ Error polling Telegram updates: {str(poll_err)}")
             
         time.sleep(2)
 
-    # 3. INITIALIZE ENGINE ONCE AUTHENTICATED
-    logging.info("🚀 FLATTRADE SECURE AUTHENTICATION SUCCESSFUL via Telegram routing.")
+    logging.info("🚀 FLATTRADE VERSION 2 SECURE AUTHENTICATION SUCCESSFUL via Telegram routing.")
     api.set_session(userid=CLIENT_CODE, token=session_token, user_data=login_response)
 
     # Seed baseline historical data sets 
