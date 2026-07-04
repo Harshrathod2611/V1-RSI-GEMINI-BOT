@@ -272,12 +272,13 @@ def start_flattrade_system():
     hashed_api_secret = hashlib.sha256(raw_secret_combo.encode('utf-8')).hexdigest()
     
     # 3. Construct raw dictionary parameters using specific internal keys
+# 3. Construct raw dictionary parameters using specific internal keys
     payload = {
         "apkversion": "1.0.0",
         "uid": CLIENT_CODE,
         "pwd": hashed_password,       # Pre-hashed password for direct endpoint parsing
         "factor2": raw_totp,          
-        "vc": "FTB2C",               
+        "vc": CLIENT_CODE,            # 🌟 FIXED: Dynamically sets your Vendor Code to your Client ID (FZ37812)
         "appkey": hashed_api_secret,
         "imei": "00-00-00-00-00-00",
         "source": "API"
