@@ -1,11 +1,12 @@
-# bot.py (COMPLETE FLATTRADE PRODUCTION READY VERSION)
+# bot.py (PRODUCTION FLATTRADE AUTHENTICATION RE-ENGINEERED)
 import os
 import time
 import logging
 import requests
 import pyotp
+import hashlib  # Matrix crypto library for Flattrade
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 import zoneinfo
 from google import genai 
 import matplotlib
@@ -13,35 +14,39 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 import watchlist
-# 🌟 IMPORT THE NEW FLATTRADE API WRAPPER
 from NorenRestApiPy.NorenApi import NorenApi
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
 # ==============================================================================
-# ENVIRONMENT VARIABLES CONFIGURATION MATRIX
+# ENVIRONMENT VARIABLES DUAL-USE PARSING SYSTEM
 # ==============================================================================
-try:
-    import config
-    API_KEY = config.API_KEY
-    CLIENT_CODE = config.CLIENT_CODE
-    PASSWORD = config.PASSWORD
-    TOTP_TOKEN = config.TOTP_TOKEN
-    TELEGRAM_BOT_TOKEN = config.TELEGRAM_BOT_TOKEN
-    TELEGRAM_CHAT_ID = config.TELEGRAM_CHAT_ID
-    GEMINI_API_KEY = config.GEMINI_API_KEY
-    logging.info("💻 Local config.py properties parsed cleanly.")
-except ModuleNotFoundError:
-    API_KEY = os.environ.get("API_KEY")
+# Priority 1: Check if running on Cloud Containers (Railway)
+if os.environ.get("CLIENT_CODE"):
     CLIENT_CODE = os.environ.get("CLIENT_CODE")
     PASSWORD = os.environ.get("PASSWORD")
+    API_KEY = os.environ.get("API_KEY")
     TOTP_TOKEN = os.environ.get("TOTP_TOKEN")
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
     TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
     GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-    logging.info("☁️ Operating inside container vault environment variables loaded.")
+    logging.info("☁️ RAILWAY CONTAINER METRICS: Loaded cleanly from platform variables vault.")
+else:
+    # Priority 2: Fall back to local config for debugging
+    try:
+        import config
+        CLIENT_CODE = config.CLIENT_CODE
+        PASSWORD = config.PASSWORD
+        API_KEY = config.API_KEY
+        TOTP_TOKEN = config.TOTP_TOKEN
+        TELEGRAM_BOT_TOKEN = config.TELEGRAM_BOT_TOKEN
+        TELEGRAM_CHAT_ID = config.TELEGRAM_CHAT_ID
+        GEMINI_API_KEY = config.GEMINI_API_KEY
+        logging.info("💻 LOCAL ENVIRONMENT METRICS: config.py file parsed cleanly.")
+    except ModuleNotFoundError:
+        logging.error("❌ CRITICAL: Configuration variables not found on platform or local workspace.")
+        raise RuntimeError("No environment credentials specified.")
 
-# Flattrade handles subscriptions using standard NSE exchange token maps
 TOKEN_TO_TICKER = {str(v): k for k, v in watchlist.WATCHLIST.items()}
 DATA_CACHE = {}
 STRATEGY_STATES = {ticker: "READY" for ticker in watchlist.WATCHLIST.keys()}
@@ -50,32 +55,22 @@ CASH_CAPITAL_PER_TRADE = 7000.0
 LEVERAGE_MULTIPLIER = 5.0          
 VOLUME_MA_PERIOD = 20              
 
-# ==============================================================================
-# FLATTRADE CORE RUNTIME API CLASS INTERFACE
-# ==============================================================================
-# ==============================================================================
-# FLATTRADE CORE RUNTIME API CLASS INTERFACE
-# ==============================================================================
 class FlattradeBotEngine(NorenApi):
     def __init__(self):
-        # ⚡ UPDATED WITH CORRECT PICONNECT PRODUCTION ENDPOINTS
+        # Initialize precisely with the verified PiConnect endpoints
         NorenApi.__init__(self, 
                           host='https://piconnect.flattrade.in/PiConnectAPI/', 
                           websocket='wss://piconnect.flattrade.in/PiConnectWSAPI/')
+
 # ==============================================================================
-# VISUAL INSIGHTS CHART GENERATOR ENGINE
+# STRATEGY GRAPHIC ENGINE & ANALYSIS CORRIDORS
 # ==============================================================================
 def create_live_signal_chart(ticker, trade_type, full_df, timestamp_str):
     try:
         os.makedirs("static/chart_storage", exist_ok=True)
-        if len(full_df) >= 78:
-            day_df = full_df.tail(78).copy().reset_index(drop=True)
-        else:
-            day_df = full_df.copy().reset_index(drop=True)
-
+        day_df = full_df.tail(78).copy().reset_index(drop=True) if len(full_df) >= 78 else full_df.copy().reset_index(drop=True)
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), sharex=True, gridspec_kw={'height_ratios': [2.5, 1]})
         
-        # Draw Candlesticks
         for idx, row in day_df.iterrows():
             color = '#26a69a' if row['close'] >= row['open'] else '#ef5350'
             ax1.vlines(idx, row['low'], row['high'], colors=color, linewidth=1.2)
@@ -86,12 +81,11 @@ def create_live_signal_chart(ticker, trade_type, full_df, timestamp_str):
         marker_color = '#2ecc71' if trade_type == "BUY" else '#e74c3c'
         ax1.scatter(signal_loc, entry_row['close'], color=marker_color, s=150, zorder=5, marker='^' if trade_type == "BUY" else 'v')
         
-        ax1.set_title(f"{ticker} - FLATTRADE 5M TIMEFRAME HORIZON", color='white', fontsize=12, weight='bold', loc='left')
+        ax1.set_title(f"{ticker} - FLATTRADE 5M HORIZON", color='white', fontsize=12, weight='bold', loc='left')
         ax1.set_ylabel("Price (INR)", color='#b2b5be')
         ax1.grid(True, color='#2a2e39', linestyle=':', alpha=0.6)
         ax1.set_facecolor('#131722')
 
-        # Draw Indicators
         ax2.plot(day_df.index, day_df['RSI'], color='#29b6f6', label='RSI (14)', linewidth=1.5)
         ax2.plot(day_df.index, day_df['RSI_SMA'], color='#ffeb3b', label='RSI SMA', linewidth=1.2)
         ax2.axhline(70, color='#ef5350', linestyle='--', alpha=0.5)
@@ -99,7 +93,6 @@ def create_live_signal_chart(ticker, trade_type, full_df, timestamp_str):
         ax2.set_facecolor('#131722')
         ax2.set_ylim(10, 90)
 
-        # Apply Day Separators
         last_date_seen = None
         for idx, row in day_df.iterrows():
             current_date = str(row['timestamp']).split(' ')[0]
@@ -121,14 +114,11 @@ def create_live_signal_chart(ticker, trade_type, full_df, timestamp_str):
         plt.close(fig)
         return dashboard_path
     except Exception as e:
-        logging.error(f"❌ Chart generation crash: {str(e)}")
+        logging.error(f"❌ Chart generation fault: {str(e)}")
         return None
 
-# ==============================================================================
-# COGNITIVE ARTIFICIAL INTELLIGENCE STRATEGY ADVISOR REVIEWER
-# ==============================================================================
 def generate_ai_advisor_analysis(ticker_name, intraday_df, volume_summary):
-    if not GEMINI_API_KEY: return "⚠️ *AI ADVISOR VERDICT: KEY UNSET*"
+    if not GEMINI_API_KEY: return "⚠️ *AI ADVISOR VERDICT: ACCESSIBILITY KEY UNSET*"
     ist_zone = zoneinfo.ZoneInfo("Asia/Kolkata")
     today_str = datetime.now(ist_zone).strftime("%Y-%m-%d")
     today_candles = intraday_df[intraday_df['timestamp'].str.startswith(today_str)].tail(35)
@@ -153,17 +143,14 @@ def generate_ai_advisor_analysis(ticker_name, intraday_df, volume_summary):
         response = local_ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
         return response.text.strip()
     except Exception as e:
-        return f"⚠️ *AI ADVISOR VERDICT: FAULT ERROR* ({str(e)})"
+        return f"⚠️ *AI ADVISOR VERDICT: TRANSCRIPTION FAULT* ({str(e)})"
 
 def send_telegram_alert(text):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}, timeout=5)
-    except Exception as e: logging.error(f"Telegram alerting crash: {e}")
+    except Exception as e: logging.error(f"Telegram alert delivery failure: {e}")
 
-# ==============================================================================
-# SIGNAL EVALUATION CORE SYSTEM ENGINE
-# ==============================================================================
 def check_for_signals(ticker, is_live=False, current_bid_depth=150000, current_ask_depth=120000):
     df = DATA_CACHE.get(ticker)
     if df is None or len(df) < 30: return
@@ -183,10 +170,9 @@ def check_for_signals(ticker, is_live=False, current_bid_depth=150000, current_a
     current_rsi = latest_bar['RSI']
     current_state = STRATEGY_STATES.get(ticker, "READY")
     
-    # Boundary threshold reset tracker matrix logic
     if 30 <= current_rsi <= 70 and current_state != "READY":
         STRATEGY_STATES[ticker] = "READY"
-        logging.info(f"🔄 {ticker} RSI returned to neutral center zone. Strategy matrix is RESET.")
+        logging.info(f"🔄 {ticker} RSI returned to center zone. Strategy engine reset.")
 
     if not is_live: return
 
@@ -194,14 +180,12 @@ def check_for_signals(ticker, is_live=False, current_bid_depth=150000, current_a
     trade_quantity = int(purchasing_power // latest_bar['close'])
     timestamp_str = latest_bar['timestamp']
 
-    # CRITERIA 1: OVERSOLD BUY ANCHOR SIGNAL
     if current_rsi < 30 and current_state == "READY":
         if previous_bar['RSI'] <= previous_bar['RSI_SMA'] and latest_bar['RSI'] > latest_bar['RSI_SMA']:
             STRATEGY_STATES[ticker] = "LOCKED_BUY"
             create_live_signal_chart(ticker, "BUY", df, timestamp_str)
             ai_block = generate_ai_advisor_analysis(ticker, df, f"Vol: {latest_bar['volume']}")
             
-            # Forward directly to centralized main.py web dashboard portal matrix
             payload = {
                 "stock_name": ticker, "signal_type": "BUY", "entry_price": float(latest_bar['close']),
                 "quantity": trade_quantity, "take_profit": round(latest_bar['close']*1.005, 2),
@@ -212,7 +196,6 @@ def check_for_signals(ticker, is_live=False, current_bid_depth=150000, current_a
             requests.post("http://127.0.0.1:8000/api/webhook/alert", json=payload, timeout=5)
             send_telegram_alert(f"📊 *FLATTRADE ALERT DETECTED*\nAsset: {ticker}\nSignal: BUY ENTRY @ ₹{latest_bar['close']}")
 
-    # CRITERIA 2: OVERBOUGHT SHORT SELL SIGNAL
     elif current_rsi > 70 and current_state == "READY":
         if previous_bar['RSI'] >= previous_bar['RSI_SMA'] and latest_bar['RSI'] < latest_bar['RSI_SMA']:
             STRATEGY_STATES[ticker] = "LOCKED_SHORT"
@@ -229,9 +212,6 @@ def check_for_signals(ticker, is_live=False, current_bid_depth=150000, current_a
             requests.post("http://127.0.0.1:8000/api/webhook/alert", json=payload, timeout=5)
             send_telegram_alert(f"📊 *FLATTRADE ALERT DETECTED*\nAsset: {ticker}\nSignal: SHORT SELL @ ₹{latest_bar['close']}")
 
-# ==============================================================================
-# REAL-TIME MARKET BAR CONSOLIDATION PIPELINE
-# ==============================================================================
 class CandleAggregator:
     def __init__(self, ticker):
         self.ticker = ticker
@@ -274,61 +254,66 @@ class CandleAggregator:
         check_for_signals(self.ticker, is_live=True, current_bid_depth=bid_qty, current_ask_depth=ask_qty)
 
 # ==============================================================================
-# SYSTEM BOOTSTRAP INITIALIZER EXECUTOR
+# ENGINE MAIN EXECUTIVE FRAMEWORK
 # ==============================================================================
 def start_flattrade_system():
-    # 🌟 NEW FLATTRADE API CLIENT INSTANTIATION PIPELINE
     api = FlattradeBotEngine()
     
-    # Generate SHA-256 Security Hash Signature
+    # 1. Compute dynamic TOTP token validation metrics
     raw_totp = pyotp.TOTP(TOTP_TOKEN).now()
-    logging.info(f"🔑 Generating real-time login encryption hash for client: {CLIENT_CODE}")
+    logging.info(f"🔑 Generating system authorization handshake for client: {CLIENT_CODE}")
     
-    # Internal session activation protocol
-#  CORRECT FLATTRADE LOGIN METHOD CALL
-    login_response = api.login(userid=CLIENT_CODE, password=PASSWORD, 
-                               twoFA=raw_totp, vendor_code='', 
-                               api_secret=API_KEY, imei='MAC_ADDRESS')
+    # 2. Compute explicit SHA-256 Hashing required by Flattrade for password and secret matrix
+    hashed_password = hashlib.sha256(PASSWORD.encode('utf-8')).hexdigest()
+    raw_secret_combo = f"{API_KEY}{CLIENT_CODE}"
+    hashed_api_secret = hashlib.sha256(raw_secret_combo.encode('utf-8')).hexdigest()
+    
+    # 3. Fire structural authorization sequence to API routers
+    login_response = api.login(
+        userid=CLIENT_CODE, 
+        password=hashed_password, 
+        twoFA=raw_totp, 
+        vendor_code='', 
+        api_secret=hashed_api_secret, 
+        imei='DESKTOP_ENV'
+    )
+    
+    # Debug raw response tracking map
+    logging.info(f"📡 Debug raw gateway footprint payload: {login_response}")
     
     if login_response and login_response.get('stat') == 'Ok':
-        logging.info("🚀 FLATTRADE 24/7 API ROUTER AUTHENTICATED SUCCESSFULLY.")
+        logging.info("🚀 FLATTRADE ROUTER SYSTEM ONLINE. LIVE STREAM ENGAGED.")
     else:
-        logging.error("❌ Flattrade gateway authentication rejected. Verify your config.py properties.")
+        error_msg = login_response.get('emsg') if login_response else "Empty network handshake signature returned."
+        logging.error(f"❌ Flattrade gateway authentication rejected. Server feedback: {error_msg}")
         return
 
-    # Seed baseline historical data sets 
     for ticker in watchlist.WATCHLIST.keys():
         DATA_CACHE[ticker] = pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
-        logging.info(f"📈 History array tracking map seeded for asset: {ticker}")
+        logging.info(f"📈 Seeding real-time metric arrays for tracking asset vector: {ticker}")
 
     global LIVE_ENGINES
     LIVE_ENGINES = {ticker: CandleAggregator(ticker) for ticker in watchlist.WATCHLIST.keys()}
 
-    # Initialize WebSocket event triggers
     def event_handler_feed(msg):
-        # Parses tick structures directly from Flattrade WSAPI stream
-        if msg.get('t') == 'tf': # Touchline Feed Object
+        if msg.get('t') == 'tf': 
             token = msg.get('tk')
             ticker = TOKEN_TO_TICKER.get(str(token))
             if ticker and ticker in LIVE_ENGINES:
                 price = float(msg.get('lp', 0))
                 volume_delta = int(msg.get('v', 0))
-                # Grab instant order-book snapshots to compute 5-min static depth components
                 bid_depth = float(msg.get('tbq', 160000))
                 ask_depth = float(msg.get('tsq', 130000))
-                
                 if price > 0:
                     LIVE_ENGINES[ticker].handle_tick(price, volume_delta, bid_depth, ask_depth)
 
     def open_callback():
-        # Subscribes to stock token vectors listed inside your watchlist
         for ticker, token in watchlist.WATCHLIST.items():
             api.subscribe(f"NSE|{token}")
-        logging.info("📡 Flattrade Live WebSocket processing stream engaged.")
+        logging.info("📡 Live WebSocket matrix pipeline successfully established.")
 
     api.start_websocket(subscribe_callback=event_handler_feed, socket_open_callback=open_callback)
     
-    # Keep main execution frame alive indefinitely
     while True:
         time.sleep(1)
 
